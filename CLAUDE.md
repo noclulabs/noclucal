@@ -9,7 +9,7 @@
 - **Domain:** cal.noclulabs.com (subdomain of noclulabs.com for cookie-based SSO)
 - **Repository:** github.com/noclulabs/noclucal
 - **Hosting:** DigitalOcean Droplet (shared with noclulabs.com and portalNetwork; unique host port)
-- **Status:** Phase 0 in progress. Bible files seeded; no code yet.
+- **Status:** Phase 1a complete. Next.js 16 scaffold deployed, CI/CD chain validated end-to-end.
 
 ## Bible files (canonical set)
 
@@ -82,14 +82,49 @@ noCluCal is a relying party to noclulabs.com's identity. Mechanics:
 
 ```
 noclucal/
-  CLAUDE.md
+  .github/
+    workflows/
+      ci.yml
+      deploy.yml
+  public/
+    robots.txt
+  src/
+    app/
+      globals.css
+      layout.tsx
+      page.tsx
+    lib/
+      version.ts
+  tests/
+    setup.ts
+    smoke.test.ts
+  .dockerignore
+  .env.example
+  .gitignore
   CHANGELOG.md
+  CLAUDE.md
+  Dockerfile
   README.md
   ROADMAP.md
-  .gitignore
+  docker-compose.yml
+  eslint.config.mjs
+  next.config.ts
+  package.json
+  pnpm-lock.yaml
+  postcss.config.mjs
+  tsconfig.json
+  vitest.config.ts
 ```
 
-Phase 1 introduces the full Next.js + Drizzle + Auth.js scaffold; the file structure expands at that point.
+Phase 1b adds Drizzle + `pg` and the local Postgres compose file. Phase 1c adds the migrator stage and the `migrate` Compose profile. Phase 1d adds the Auth.js v5 RP-mode config split (`auth.config.ts`, `auth.ts`, `proxy.ts`).
+
+## Deployment / actual state
+
+- Live at https://cal.noclulabs.com with the placeholder homepage.
+- Host port 3002 confirmed in use (portalNetwork = 3000, noclulabs = 3001, noCluCal = 3002).
+- Caddy block for `cal.noclulabs.com` is live on the droplet, terminating TLS and proxying to `127.0.0.1:3002`.
+- First manual deploy ops (clone to `/opt/noclucal`, create `.env`, add Caddy block) happened on 2026-05-26 alongside this PR.
+- The Phase 1a `deploy.yml` runs only `git pull` + `docker compose up -d --build` + `docker image prune -f`. The `migrate` Compose profile invocation lands in Phase 1c when the first migration ships.
 
 ## Conventions
 

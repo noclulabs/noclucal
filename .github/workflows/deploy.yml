@@ -1,0 +1,28 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DO_HOST }}
+          username: ${{ secrets.DO_USER }}
+          key: ${{ secrets.DO_SSH_KEY }}
+          script: |
+            set -e
+            if [ ! -d "/opt/noclucal" ]; then
+              echo "Error: /opt/noclucal does not exist on the droplet."
+              echo "Manual setup required: clone the repo, create .env, configure Caddy."
+              echo "See phase-1a-manual-ops.md for the one-time setup."
+              exit 1
+            fi
+            cd /opt/noclucal
+            git pull origin main
+            docker compose up -d --build
+            docker image prune -f

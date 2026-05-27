@@ -1,0 +1,9 @@
+services:
+  web:
+    build:
+      context: .
+    ports:
+      - "3002:3000"
+    env_file:
+      - .env
+    restart: unless-stopped
