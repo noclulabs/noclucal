@@ -235,7 +235,7 @@ Phase 2 introduces a `CalendarProvider` interface so the booking core never depe
 
 Same shape as noclulabs and portalNetwork:
 
-- Multi-stage `Dockerfile` (deps / build / runner / migrator stages on `node:20-alpine`).
+- Multi-stage `Dockerfile` (deps / build / migrator / runner stages on `node:20-alpine`).
 - `docker-compose.yml` maps host port `3002` to container port `3000` (portalNetwork holds 3000, noclulabs holds 3001, noCluCal claims 3002).
 - Caddy on the host terminates TLS for `cal.noclulabs.com` and proxies to `127.0.0.1:3002`.
 - GitHub Actions `ci.yml` runs lint + type-check + test + build on every push and PR.
@@ -246,6 +246,12 @@ Production paths on the droplet (planned):
 - Repo clone: `/opt/noclucal/`
 - Env file: `/opt/noclucal/.env`
 - Caddy block for `cal.noclulabs.com` added to the host Caddyfile.
+
+### Dockerfile stage ordering
+
+The Dockerfile defines four stages in this order: `deps` → `build` → `migrator` → `runner`. The order is load-bearing: `docker-compose.yml`'s `web` service does NOT specify a `target:` directive, so Docker builds the LAST stage by default. `runner` must remain last for `web` to build the Next.js runtime image. The `migrate` Compose service uses `target: migrator` explicitly, so it is unaffected by where `migrator` sits in the file as long as it exists.
+
+Phase 1c shipped with `migrator` as the last stage and production restart-looped on the migrator's CMD until this was caught and fixed.
 
 ## Known minor issues
 
