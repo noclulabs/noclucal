@@ -9,7 +9,7 @@
 - **Domain:** cal.noclulabs.com (subdomain of noclulabs.com for cookie-based SSO)
 - **Repository:** github.com/noclulabs/noclucal
 - **Hosting:** DigitalOcean Droplet (shared with noclulabs.com and portalNetwork; unique host port)
-- **Status:** Phase 1c complete. First schema (`noclucal_users` shadow table) and first migration shipped. Migrator Docker stage and migrate Compose profile wired into the deploy chain; deploy.yml now runs migrations before the web container rebuilds. CI Postgres service container in place for future DB-touching tests.
+- **Status:** Phase 1d complete. Auth.js v5 wired in SSO RP mode. The session cookie set by noclulabs on `.noclulabs.com` is now read here, verified with the shared `AUTH_SECRET`, and propagated via `auth()`. First protected route `/me` proves the SSO bridge end-to-end. `noclucal_users` shadow table receives a lazy upsert on each authenticated request. Phase 1 is closed; Phase 2 (Google Calendar provider) is the next architect prompt.
 
 ## Bible files (canonical set)
 
@@ -99,10 +99,18 @@ noclucal/
     db-test-setup.ts
   src/
     app/
+      api/
+        auth/
+          [...nextauth]/
+            route.ts
+      me/
+        page.tsx
       globals.css
       layout.tsx
       page.tsx
     lib/
+      auth/
+        upsert-noclucal-user.ts
       db/
         schema/
           _types.ts
@@ -110,7 +118,13 @@ noclucal/
           users.ts
         index.ts
       version.ts
+    auth.config.ts
+    auth.ts
+    proxy.ts
   tests/
+    lib/
+      auth/
+        upsert-noclucal-user.test.ts
     setup.ts
     smoke.test.ts
   .dockerignore
@@ -133,7 +147,7 @@ noclucal/
   vitest.config.ts
 ```
 
-Phase 1d adds the Auth.js v5 RP-mode config split (`auth.config.ts`, `auth.ts`, `proxy.ts`) and the `noclucal_users` lazy upsert helper.
+Phase 1d added the Auth.js v5 RP-mode config split (`src/auth.config.ts`, `src/auth.ts`, `src/proxy.ts`), the NextAuth handlers route (`src/app/api/auth/[...nextauth]/route.ts`), the `noclucal_users` lazy upsert helper (`src/lib/auth/upsert-noclucal-user.ts`), and the `/me` proof-of-life page (`src/app/me/page.tsx`).
 
 ## Deployment / actual state
 
@@ -212,14 +226,19 @@ Database wiring landed in Phase 1b; first schema and first migration landed in P
 - **Deploy.** On every merge to `main`, `deploy.yml` runs `docker compose --profile migrate run --rm --build migrate` before rebuilding the web container. Drizzle's `__drizzle_migrations` tracking table makes this idempotent: already-applied migrations are skipped. The order (migrate, then rebuild) suits additive migrations. For a migration that drops a column or otherwise breaks the previous app code, flip the order for that deploy (build first, migrate second).
 - **CI.** `ci.yml` spins up a `postgres:18-alpine` service container, sets `DATABASE_URL` at the job level, and runs `pnpm db:test:setup` (which shells out to `pnpm db:migrate:deploy`) before lint. No tests use the DB yet; infrastructure lives now so Phase 1d slots in cleanly.
 
-## Auth (planned, Phase 1)
+## Auth
 
-Phase 1 will wire Auth.js v5 in SSO-relying-party mode. Confirmed architectural decisions:
+Auth.js v5 is wired in SSO relying-party mode as of Phase 1d. All authentication happens at noclulabs.com; noCluCal verifies the JWT noclulabs signed and propagates the session via `auth()`. There is no signin/signup form here.
 
 - **Config split.** Same edge-safe / server-only split as noclulabs: `src/auth.config.ts` (edge-safe, no `pg` / `drizzle` / `bcrypt` imports), `src/auth.ts` (extends, no providers since this is RP-only), `src/proxy.ts` (imports ONLY from `auth.config.ts`, replaces the Next.js 16 deprecated `middleware` convention). NEVER collapse to one file; the proxy compiles to the edge runtime and crashes if Node-only imports leak in.
 - **No providers.** The Auth.js providers array is empty. Sign-in happens at noclulabs.com.
-- **Cookie domain.** `cookies.sessionToken.options.domain = ".noclulabs.com"` so the cookie set by noclulabs.com is visible here.
-- **JWT shape.** Mirrors noclulabs' augmentation: `{ id, username, role: "user" | "admin", signedInAt: number }`.
+- **Cookie domain.** `cookies.sessionToken.options.domain = ".noclulabs.com"` in production (gated on `AUTH_URL` starting with `https://`). In dev the cookie stays host-only because browsers refuse parent-domain cookies on bare-host origins.
+- **Cookie name prefix.** `__Secure-` prefix is applied in lockstep with `useSecureCookies`, matching noclulabs exactly so the same cookie is read on both sides.
+- **JWT shape.** Mirrors noclulabs' augmentation: `{ id, username, role: "user" | "admin", signedInAt?: number, deviceId?: string }`. `signedInAt` and `deviceId` are read but never written here.
+- **Session callback.** A pure pass-through that maps JWT fields onto `session.user`. No DB access, no mutation of the token.
+- **Protected routes.** Listed in `src/proxy.ts`'s `config.matcher`. Phase 1d ships `/me` only; later phases extend the matcher. Unauthenticated visitors are redirected to `https://noclulabs.com/signin?redirect=<encoded original URL>`.
+- **NextAuth handlers.** `src/app/api/auth/[...nextauth]/route.ts` re-exports `GET` and `POST` from `@/auth`. Required even in RP-only mode for the session endpoint.
+- **Lazy upsert.** `src/lib/auth/upsert-noclucal-user.ts` performs an `INSERT ... ON CONFLICT (id) DO UPDATE` into `noclucal_users` on each authenticated page render. Best-effort: failures are logged but never break the render. Callers wrap in `try/catch`.
 - **Env vars.** Same set as noclulabs: `AUTH_SECRET` (MUST match noclulabs' value exactly), `AUTH_URL` (`https://cal.noclulabs.com` in prod), `AUTH_TRUST_HOST=true` (required behind the Caddy reverse proxy).
 
 ## Calendar provider abstraction (planned, Phase 2)

@@ -6,6 +6,13 @@ All notable changes to noCluCal will be documented in this file. Format follows 
 
 ### Added
 
+- feat(phase-1d): Auth.js v5 in SSO relying-party mode. `src/auth.config.ts` declares JWT and Session types matching noclulabs.com exactly (`{ id, username, role, signedInAt?, deviceId? }`); sets cookie domain `.noclulabs.com` in production so the cookie noclulabs sets is visible here. `src/auth.ts` is a minimal NextAuth wrapper (no providers; sign-in happens at noclulabs).
+- feat(phase-1d): `src/proxy.ts` (Next.js 16's middleware replacement). Redirects unauthenticated visitors to `https://noclulabs.com/signin?redirect=https://cal.noclulabs.com/<path>`. Matcher protects `/me` in Phase 1d; future phases extend the matcher.
+- feat(phase-1d): `src/app/api/auth/[...nextauth]/route.ts` re-exports the handlers from `@/auth`.
+- feat(phase-1d): `src/lib/auth/upsert-noclucal-user.ts` performs an idempotent INSERT ON CONFLICT DO UPDATE into `noclucal_users`. Best-effort, never blocks page renders.
+- feat(phase-1d): `src/app/me/page.tsx` is the SSO bridge proof-of-life page. Authenticated users see their id, username, and role rendered from the session forwarded by noclulabs.
+- chore(phase-1d): added `next-auth@5.0.0-beta.31` to dependencies. Pinned to match noclulabs.
+- test(phase-1d): `tests/lib/auth/upsert-noclucal-user.test.ts` covers insert, update, and null displayName cases against the CI Postgres service container. Vitest config extended to load `.env.local` and to disable file parallelism so DB-touching tests do not race.
 - feat(phase-1c): first Drizzle schema. `noclucal_users` shadow table (id uuid PK, username citext NOT NULL, display_name text nullable, observed_at timestamptz NOT NULL default now()). Custom `citext` Drizzle column type at `src/lib/db/schema/_types.ts`. Barrel export at `src/lib/db/schema/index.ts`.
 - feat(phase-1c): first migration `drizzle/migrations/0000_even_the_twelve.sql`. Hand-edited to prepend `CREATE EXTENSION IF NOT EXISTS citext;` because Drizzle does not auto-generate extension creation. Applied to local dev DB via `pnpm db:migrate`; will apply to `noclucal_prod` automatically when deploy.yml runs the migrate Compose profile on merge.
 - feat(phase-1c): `src/lib/db/index.ts` updated to pass `schema` to `drizzle()`, so `db.query.noclucalUsers` is now typed. Module also re-exports `schema` for callers that need raw table refs.
