@@ -20,7 +20,7 @@ Identity federates from noclulabs.com via a shared-cookie SSO bridge. One noClu 
 
 ## Status
 
-Phase 1a complete. Site responds at https://cal.noclulabs.com with a placeholder homepage. Phase 1b (database wiring) is next.
+Phase 1b complete. Database connection module wired. Local dev Postgres compose available. Production DB (`noclucal_prod` in the shared DO Managed Postgres cluster) provisioned and the droplet `.env` updated. No schema or migrations yet; that lands in Phase 1c.
 
 ## Getting started
 
@@ -53,7 +53,24 @@ pnpm lint         # Run ESLint
 pnpm type-check   # TypeScript type checking
 pnpm test         # Run Vitest suite
 pnpm test:watch   # Run Vitest in watch mode
+pnpm db:smoke     # Run a connectivity check against DATABASE_URL (SELECT version / 1 / NOW)
 ```
+
+### Local database
+
+PostgreSQL 18 runs locally via Docker. Spin it up before running `pnpm db:smoke` (and, once Phase 1c lands, `pnpm db:migrate` and `pnpm db:studio`):
+
+```bash
+docker compose -f docker-compose.dev.yml up -d
+```
+
+Connection string defaults match `.env.local` (host port 5434, user `noclucal`, database `noclucal_dev`). Port 5434 is deliberate; noclulabs' dev Postgres holds 5433, so both can run on the same Mac without clashing. After spinning up:
+
+```bash
+pnpm db:smoke
+```
+
+should print three successful queries and exit 0. See `CLAUDE.md` § Database for the full architectural decisions (connection module, SSL workaround, two-URL pattern).
 
 ## Bible files
 

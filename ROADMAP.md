@@ -8,7 +8,8 @@ Version targets and planned work for noCluCal.
 
 - Phase 0 (Bible seeding): complete (2026-05-26).
 - Phase 1a (foundation scaffold and CI/CD chain): complete (2026-05-26). Next.js 16 scaffold, Tailwind v4, Vitest harness, multi-stage Dockerfile, GitHub Actions CI and Deploy. Site live at https://cal.noclulabs.com with the placeholder homepage.
-- Phase 1b (database wiring): ready. Drizzle + `pg`, `src/lib/db/` connection module, `docker-compose.dev.yml` for local Postgres on host port 5434.
+- Phase 1b (database wiring): complete (2026-05-26). Drizzle + `pg` connection module at `src/lib/db/index.ts` (lazy-init, max 10 pool, libpqcompat documented), `docker-compose.dev.yml` for local Postgres 18 on host port 5434, `pnpm db:smoke` validates connectivity. No schema yet.
+- Phase 1c (migrator stage and first schema): ready. Migrator Docker stage, `migrate` Compose profile, CI Postgres service container, first migration creating `noclucal_users`, `calendar_connections`, `event_types`, `availability_rules`, `bookings`.
 
 ---
 
@@ -37,17 +38,23 @@ Sets up the Next.js 16 + Drizzle + Auth.js skeleton with the SSO bridge wired an
 - [x] `robots.txt` blocking all crawlers until the booking flow ships.
 - [x] Caddy reverse proxy block for `cal.noclulabs.com` deployed manually to the droplet during Phase 1a ops.
 
-### Phase 1b: database wiring
+### Phase 1b: database wiring (complete)
 
-- [ ] Drizzle ORM + `pg` driver. `src/lib/db/` connection module mirroring noclulabs (lazy init, max 10 pool, libpqcompat suffix verified).
-- [ ] `docker-compose.dev.yml` for local Postgres on host port 5434 (avoid clash with noclulabs' 5433).
-- [ ] First Drizzle migration: `noclucal_users` shadow table (id + cached username + display_name), `calendar_connections` (polymorphic, encrypted token storage), `event_types`, `availability_rules`, `bookings`. Uuidv7 PKs, citext where appropriate, soft-delete via `deleted_at`.
+- [x] Drizzle ORM + `pg` driver. `src/lib/db/index.ts` connection module mirroring noclulabs (lazy init via Proxy, max 10 pool, 30s idle, 5s connect timeout). Importing the module has no side effects; throws if `DATABASE_URL` is unset on first use.
+- [x] `docker-compose.dev.yml` for local Postgres 18 on host port 5434 (avoid clash with noclulabs' 5433). Volume mounted at `/var/lib/postgresql` so PG18+ data lives under its major-version subdirectory.
+- [x] `drizzle.config.ts` pointing drizzle-kit at `./src/lib/db/schema/*.ts` (currently empty) and `./drizzle/migrations/`.
+- [x] `scripts/db-smoke-test.ts` + `pnpm db:smoke` permanent diagnostic infrastructure. Runs `SELECT version()`, `SELECT 1`, `SELECT NOW()` against the pool.
+- [x] `noclucal_prod` provisioned in the shared DO Managed Postgres cluster; both URLs (public + VPC) captured in Bitwarden with the libpqcompat suffix; droplet `.env` updated.
+
+### Phase 1c: migrator stage, deploy migrate profile, and first schema
+
+- [ ] First Drizzle schema files in `src/lib/db/schema/`: `noclucal_users` shadow table (id + cached username + display_name), `calendar_connections` (polymorphic, encrypted token storage), `event_types`, `availability_rules`, `bookings`. Uuidv7 PKs, citext where appropriate, soft-delete via `deleted_at`.
 - [ ] `noclucal_users` projection write helper: on first observation of a user (any authenticated request where the user_id is not yet in `noclucal_users`), insert a row with cached username and display_name.
-
-### Phase 1c: migrator stage and deploy migrate profile
-
+- [ ] Refactor `src/lib/db/index.ts` to pass the schema into `drizzle(pool, { schema })` and re-export it so callers get typed `db.query.<table>` accessors.
+- [ ] First migration generated via `pnpm db:generate` and committed under `drizzle/migrations/`.
 - [ ] Add migrator Dockerfile stage mirroring noclulabs.
 - [ ] Add `migrate` profile to `docker-compose.yml`.
+- [ ] Extend `ci.yml` with a Postgres 18 service container and `pnpm db:test:setup` before `pnpm test`.
 - [ ] Extend `deploy.yml` to run `docker compose run migrate` before rebuilding the web container.
 
 ### Phase 1d: Auth.js v5 SSO-RP mode

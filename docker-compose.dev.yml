@@ -1,0 +1,31 @@
+# docker-compose.dev.yml
+# Local development database for noCluCal.
+# Production uses the shared DigitalOcean Managed Postgres cluster (database noclucal_prod).
+# Spin up: `docker compose -f docker-compose.dev.yml up -d`
+# Tear down: `docker compose -f docker-compose.dev.yml down`
+# Tear down + delete data: `docker compose -f docker-compose.dev.yml down -v`
+#
+# Host port 5434 (noclulabs uses 5433; portalNetwork uses none).
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    container_name: noclucal-postgres-dev
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: noclucal
+      POSTGRES_PASSWORD: noclucal
+      POSTGRES_DB: noclucal_dev
+    ports:
+      - "5434:5432"
+    volumes:
+      - noclucal_postgres_dev_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U noclucal -d noclucal_dev"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  noclucal_postgres_dev_data:
+    name: noclucal_postgres_dev_data
