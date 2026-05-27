@@ -20,7 +20,7 @@ Identity federates from noclulabs.com via a shared-cookie SSO bridge. One noClu 
 
 ## Status
 
-Phase 1b complete. Database connection module wired. Local dev Postgres compose available. Production DB (`noclucal_prod` in the shared DO Managed Postgres cluster) provisioned and the droplet `.env` updated. No schema or migrations yet; that lands in Phase 1c.
+Phase 1c complete. First schema and migration live in production. `noclucal_prod` now has `noclucal_users` (shadow table) and `__drizzle_migrations` (tracking). Phase 1d (Auth.js v5 in SSO RP mode) is next.
 
 ## Getting started
 
@@ -54,6 +54,9 @@ pnpm type-check   # TypeScript type checking
 pnpm test         # Run Vitest suite
 pnpm test:watch   # Run Vitest in watch mode
 pnpm db:smoke     # Run a connectivity check against DATABASE_URL (SELECT version / 1 / NOW)
+pnpm db:generate  # Generate a new migration from schema diffs
+pnpm db:migrate   # Apply pending migrations to DATABASE_URL
+pnpm db:studio    # Open Drizzle Studio against DATABASE_URL
 ```
 
 ### Local database
@@ -71,6 +74,25 @@ pnpm db:smoke
 ```
 
 should print three successful queries and exit 0. See `CLAUDE.md` § Database for the full architectural decisions (connection module, SSL workaround, two-URL pattern).
+
+### Migrations
+
+Schema lives in `src/lib/db/schema/`. To add or change a table:
+
+```bash
+# 1. Edit the schema file(s) under src/lib/db/schema/.
+# 2. Generate the migration SQL.
+pnpm db:generate
+# 3. Inspect the generated file under drizzle/migrations/. If you added a
+#    Postgres extension (citext, pgcrypto, etc.), hand-edit the file to
+#    prepend `CREATE EXTENSION IF NOT EXISTS <name>;\n--> statement-breakpoint`
+#    above the first statement that depends on it. Drizzle does not
+#    auto-generate extension creation.
+# 4. Apply the migration locally.
+pnpm db:migrate
+```
+
+In production, migrations apply automatically on every merge to `main`: `deploy.yml` runs the `migrate` Compose profile before rebuilding the web container. Drizzle's `__drizzle_migrations` tracking table makes this idempotent.
 
 ## Bible files
 
