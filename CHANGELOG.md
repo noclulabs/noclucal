@@ -6,6 +6,14 @@ All notable changes to noCluCal will be documented in this file. Format follows 
 
 ### Added
 
+- feat(phase-1c): first Drizzle schema. `noclucal_users` shadow table (id uuid PK, username citext NOT NULL, display_name text nullable, observed_at timestamptz NOT NULL default now()). Custom `citext` Drizzle column type at `src/lib/db/schema/_types.ts`. Barrel export at `src/lib/db/schema/index.ts`.
+- feat(phase-1c): first migration `drizzle/migrations/0000_even_the_twelve.sql`. Hand-edited to prepend `CREATE EXTENSION IF NOT EXISTS citext;` because Drizzle does not auto-generate extension creation. Applied to local dev DB via `pnpm db:migrate`; will apply to `noclucal_prod` automatically when deploy.yml runs the migrate Compose profile on merge.
+- feat(phase-1c): `src/lib/db/index.ts` updated to pass `schema` to `drizzle()`, so `db.query.noclucalUsers` is now typed. Module also re-exports `schema` for callers that need raw table refs.
+- feat(phase-1c): `pnpm db:generate`, `pnpm db:migrate`, `pnpm db:migrate:deploy`, `pnpm db:studio`, and `pnpm db:test:setup` scripts.
+- feat(phase-1c): migrator Docker stage in the multi-stage Dockerfile. Lightweight image carrying node_modules + drizzle-kit + drizzle/migrations + drizzle.config.ts + src/lib/db. Not shipped in the runtime web image.
+- feat(phase-1c): migrate service in docker-compose.yml gated by the `migrate` profile so it stays out of the default `docker compose up` set.
+- ci(phase-1c): deploy.yml now invokes `docker compose --profile migrate run --rm --build migrate` between `git pull` and the web rebuild. Migrations apply against `noclucal_prod` before the new container starts. Idempotent via Drizzle's __drizzle_migrations tracking table.
+- ci(phase-1c): ci.yml gains a postgres:18-alpine service container with health checks, a `DATABASE_URL` job env pointing at the service, and a `pnpm db:test:setup` step before lint. Infrastructure for future DB-touching tests.
 - feat(phase-1b): Drizzle ORM + `pg` driver wired with a lazy-init connection module at `src/lib/db/index.ts` exporting `pool`, `db`, and `closeDb`. Pool config: max 10 connections, 30s idle timeout, 5s connect timeout. Importing the module has no side effects; constructs the pool on first use and throws if `DATABASE_URL` is unset. Mirrors noclulabs' Phase 3a pattern exactly.
 - feat(phase-1b): `docker-compose.dev.yml` for local Postgres 18 on host port 5434, database `noclucal_dev`, user `noclucal`. Volume mounted at `/var/lib/postgresql` to keep PG18+ data under its major-version subdirectory.
 - feat(phase-1b): `drizzle.config.ts` pointing drizzle-kit at `./src/lib/db/schema/*.ts` (currently empty; first schema lands in 1c). Migration output configured at `./drizzle/migrations/`.

@@ -1,7 +1,9 @@
 import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 
-type Db = ReturnType<typeof drizzle>;
+import * as schema from "./schema";
+
+type Db = ReturnType<typeof drizzle<typeof schema>>;
 
 let _pool: Pool | undefined;
 let _db: Db | undefined;
@@ -31,7 +33,7 @@ function getPool(): Pool {
 
 function getDb(): Db {
   if (!_db) {
-    _db = drizzle(getPool());
+    _db = drizzle(getPool(), { schema });
   }
   return _db;
 }
@@ -59,3 +61,5 @@ export async function closeDb(): Promise<void> {
     await p.end();
   }
 }
+
+export { schema };

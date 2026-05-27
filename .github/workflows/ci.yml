@@ -9,6 +9,25 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: noclucal
+          POSTGRES_PASSWORD: noclucal
+          POSTGRES_DB: noclucal_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    env:
+      DATABASE_URL: postgresql://noclucal:noclucal@localhost:5432/noclucal_test?sslmode=disable
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -26,6 +45,9 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Set up test database
+        run: pnpm db:test:setup
 
       - name: Lint
         run: pnpm lint

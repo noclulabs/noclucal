@@ -19,10 +19,10 @@ jobs:
             if [ ! -d "/opt/noclucal" ]; then
               echo "Error: /opt/noclucal does not exist on the droplet."
               echo "Manual setup required: clone the repo, create .env, configure Caddy."
-              echo "See phase-1a-manual-ops.md for the one-time setup."
               exit 1
             fi
             cd /opt/noclucal
             git pull origin main
+            docker compose --profile migrate run --rm --build migrate
             docker compose up -d --build
             docker image prune -f

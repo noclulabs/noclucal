@@ -7,3 +7,17 @@ services:
     env_file:
       - .env
     restart: unless-stopped
+
+  # One-off migration runner. Invoked from the deploy workflow as
+  # `docker compose --profile migrate run --rm --build migrate` before the
+  # web container rebuilds. The `migrate` profile keeps this service out
+  # of the default `docker compose up` set so the runtime stack is unchanged.
+  migrate:
+    build:
+      context: .
+      target: migrator
+    env_file:
+      - .env
+    profiles:
+      - migrate
+    restart: "no"

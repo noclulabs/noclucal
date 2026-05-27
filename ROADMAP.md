@@ -9,7 +9,8 @@ Version targets and planned work for noCluCal.
 - Phase 0 (Bible seeding): complete (2026-05-26).
 - Phase 1a (foundation scaffold and CI/CD chain): complete (2026-05-26). Next.js 16 scaffold, Tailwind v4, Vitest harness, multi-stage Dockerfile, GitHub Actions CI and Deploy. Site live at https://cal.noclulabs.com with the placeholder homepage.
 - Phase 1b (database wiring): complete (2026-05-26). Drizzle + `pg` connection module at `src/lib/db/index.ts` (lazy-init, max 10 pool, libpqcompat documented), `docker-compose.dev.yml` for local Postgres 18 on host port 5434, `pnpm db:smoke` validates connectivity. No schema yet.
-- Phase 1c (migrator stage and first schema): ready. Migrator Docker stage, `migrate` Compose profile, CI Postgres service container, first migration creating `noclucal_users`, `calendar_connections`, `event_types`, `availability_rules`, `bookings`.
+- Phase 1c (first migration, migrator stage, CI test DB): complete (2026-05-27). First schema (`noclucal_users` shadow table) and first migration shipped. Migrator Docker stage and `migrate` Compose profile wired into `deploy.yml` so migrations apply before the web container rebuilds. CI gained a `postgres:18-alpine` service container and the `db:test:setup` step.
+- Phase 1d (Auth.js v5 in SSO RP mode): ready. Edge-safe / server-only config split, empty providers array, cookie domain `.noclulabs.com`, `proxy.ts` redirecting unauthenticated visitors to noclulabs.com/signin, first SSO bridge integration test, and the `noclucal_users` lazy-upsert helper.
 
 ---
 
@@ -46,22 +47,23 @@ Sets up the Next.js 16 + Drizzle + Auth.js skeleton with the SSO bridge wired an
 - [x] `scripts/db-smoke-test.ts` + `pnpm db:smoke` permanent diagnostic infrastructure. Runs `SELECT version()`, `SELECT 1`, `SELECT NOW()` against the pool.
 - [x] `noclucal_prod` provisioned in the shared DO Managed Postgres cluster; both URLs (public + VPC) captured in Bitwarden with the libpqcompat suffix; droplet `.env` updated.
 
-### Phase 1c: migrator stage, deploy migrate profile, and first schema
+### Phase 1c: migrator stage, deploy migrate profile, and first schema (complete)
 
-- [ ] First Drizzle schema files in `src/lib/db/schema/`: `noclucal_users` shadow table (id + cached username + display_name), `calendar_connections` (polymorphic, encrypted token storage), `event_types`, `availability_rules`, `bookings`. Uuidv7 PKs, citext where appropriate, soft-delete via `deleted_at`.
-- [ ] `noclucal_users` projection write helper: on first observation of a user (any authenticated request where the user_id is not yet in `noclucal_users`), insert a row with cached username and display_name.
-- [ ] Refactor `src/lib/db/index.ts` to pass the schema into `drizzle(pool, { schema })` and re-export it so callers get typed `db.query.<table>` accessors.
-- [ ] First migration generated via `pnpm db:generate` and committed under `drizzle/migrations/`.
-- [ ] Add migrator Dockerfile stage mirroring noclulabs.
-- [ ] Add `migrate` profile to `docker-compose.yml`.
-- [ ] Extend `ci.yml` with a Postgres 18 service container and `pnpm db:test:setup` before `pnpm test`.
-- [ ] Extend `deploy.yml` to run `docker compose run migrate` before rebuilding the web container.
+- [x] First Drizzle schema file in `src/lib/db/schema/`: `noclucal_users` shadow table (id uuid PK from noclulabs JWT, username citext NOT NULL, display_name text nullable, observed_at timestamptz). Custom `citext` column type in `_types.ts`. Barrel `index.ts`. The broader set (`calendar_connections`, `event_types`, `availability_rules`, `bookings`) defers to Phase 2 and later when the booking core lands.
+- [x] Refactor `src/lib/db/index.ts` to pass the schema into `drizzle(getPool(), { schema })` and re-export it so callers get typed `db.query.<table>` accessors.
+- [x] First migration generated via `pnpm db:generate` and committed under `drizzle/migrations/0000_even_the_twelve.sql`. Hand-edited to prepend `CREATE EXTENSION IF NOT EXISTS citext;` (Drizzle does not auto-generate extension creation).
+- [x] Add migrator Dockerfile stage mirroring noclulabs.
+- [x] Add `migrate` profile to `docker-compose.yml`.
+- [x] Extend `ci.yml` with a Postgres 18 service container, a job-level `DATABASE_URL`, and `pnpm db:test:setup` before lint.
+- [x] Extend `deploy.yml` to run `docker compose --profile migrate run --rm --build migrate` before rebuilding the web container.
+- [ ] `noclucal_users` projection write helper: on first observation of a user (any authenticated request where the user_id is not yet in `noclucal_users`), insert a row with cached username and display_name. Moved to Phase 1d to ship alongside the SSO bridge wiring that triggers the first observation.
 
 ### Phase 1d: Auth.js v5 SSO-RP mode
 
 - [ ] `auth.config.ts` (edge-safe, augmentations match noclulabs' JWT shape exactly), `auth.ts` (no providers), `proxy.ts` (Next.js 16 replacement for middleware; redirects unauthenticated visitors to `noclulabs.com/signin?redirect=...`).
 - [ ] Cookie domain `.noclulabs.com`. Shared `AUTH_SECRET` documented in `.env.example` with explicit note that it MUST match noclulabs' value.
 - [ ] First integration test: verify the SSO bridge accepts a JWT signed by noclulabs' `AUTH_SECRET` and rejects one signed by a different secret.
+- [ ] `noclucal_users` lazy-upsert helper invoked on first observation of an authenticated user.
 
 ## Phase 2: Google Calendar provider
 

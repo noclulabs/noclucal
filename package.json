@@ -11,7 +11,12 @@
     "type-check": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "db:smoke": "node --env-file=.env.local --import tsx scripts/db-smoke-test.ts"
+    "db:smoke": "node --env-file=.env.local --import tsx scripts/db-smoke-test.ts",
+    "db:generate": "node --env-file=.env.local --import tsx node_modules/drizzle-kit/bin.cjs generate",
+    "db:migrate": "node --env-file=.env.local --import tsx node_modules/drizzle-kit/bin.cjs migrate",
+    "db:migrate:deploy": "node --import tsx node_modules/drizzle-kit/bin.cjs migrate",
+    "db:studio": "node --env-file=.env.local --import tsx node_modules/drizzle-kit/bin.cjs studio",
+    "db:test:setup": "node --import tsx scripts/db-test-setup.ts"
   },
   "dependencies": {
     "drizzle-orm": "^0.45.2",

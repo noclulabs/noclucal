@@ -9,7 +9,7 @@
 - **Domain:** cal.noclulabs.com (subdomain of noclulabs.com for cookie-based SSO)
 - **Repository:** github.com/noclulabs/noclucal
 - **Hosting:** DigitalOcean Droplet (shared with noclulabs.com and portalNetwork; unique host port)
-- **Status:** Phase 1b complete. Database connection module wired with Drizzle + pg in lazy-init mode. Local dev Postgres compose runs on host port 5434. `pnpm db:smoke` validates connectivity end-to-end.
+- **Status:** Phase 1c complete. First schema (`noclucal_users` shadow table) and first migration shipped. Migrator Docker stage and migrate Compose profile wired into the deploy chain; deploy.yml now runs migrations before the web container rebuilds. CI Postgres service container in place for future DB-touching tests.
 
 ## Bible files (canonical set)
 
@@ -86,10 +86,17 @@ noclucal/
     workflows/
       ci.yml
       deploy.yml
+  drizzle/
+    migrations/
+      meta/
+        _journal.json
+        0000_snapshot.json
+      0000_even_the_twelve.sql
   public/
     robots.txt
   scripts/
     db-smoke-test.ts
+    db-test-setup.ts
   src/
     app/
       globals.css
@@ -98,7 +105,9 @@ noclucal/
     lib/
       db/
         schema/
-          .gitkeep
+          _types.ts
+          index.ts
+          users.ts
         index.ts
       version.ts
   tests/
@@ -124,7 +133,7 @@ noclucal/
   vitest.config.ts
 ```
 
-Phase 1c adds the migrator stage, the `migrate` Compose profile, and the first schema files (`src/lib/db/schema/*.ts`) plus the first migration (`drizzle/migrations/*.sql`). Phase 1d adds the Auth.js v5 RP-mode config split (`auth.config.ts`, `auth.ts`, `proxy.ts`).
+Phase 1d adds the Auth.js v5 RP-mode config split (`auth.config.ts`, `auth.ts`, `proxy.ts`) and the `noclucal_users` lazy upsert helper.
 
 ## Deployment / actual state
 
@@ -132,7 +141,7 @@ Phase 1c adds the migrator stage, the `migrate` Compose profile, and the first s
 - Host port 3002 confirmed in use (portalNetwork = 3000, noclulabs = 3001, noCluCal = 3002).
 - Caddy block for `cal.noclulabs.com` is live on the droplet, terminating TLS and proxying to `127.0.0.1:3002`.
 - First manual deploy ops (clone to `/opt/noclucal`, create `.env`, add Caddy block) happened on 2026-05-26 alongside this PR.
-- The Phase 1a `deploy.yml` runs only `git pull` + `docker compose up -d --build` + `docker image prune -f`. The `migrate` Compose profile invocation lands in Phase 1c when the first migration ships.
+- As of Phase 1c, `deploy.yml` runs `git pull` → `docker compose --profile migrate run --rm --build migrate` → `docker compose up -d --build` → `docker image prune -f`. Migrations apply against `noclucal_prod` before the new web container starts.
 
 ## Conventions
 
@@ -146,6 +155,7 @@ Phase 1c adds the migrator stage, the `migrate` Compose profile, and the first s
 - File naming: kebab-case for files, PascalCase for components.
 - CSS custom properties defined in `globals.css` using the tokens from the brand style guide.
 - Tailwind classes use the project's custom theme tokens, not arbitrary values.
+- **Drizzle schema-glob hazard.** drizzle-kit picks up any `*.ts` file in `src/lib/db/schema/` regardless of git tracking. A scratch file or stray copy in that directory will get baked into the next generated migration. Always confirm the schema directory contains only intended files before running `pnpm db:generate`.
 
 ### Writing Style
 
@@ -174,17 +184,33 @@ Every Claude Code session must end by updating the relevant bible files:
 
 ## Database
 
-Database wiring landed in Phase 1b. The connection module is live; the first schema and migrations land in Phase 1c.
+Database wiring landed in Phase 1b; first schema and first migration landed in Phase 1c.
 
 - **Cluster.** Same DigitalOcean Managed Postgres cluster as noclulabs (`noclulabs-postgres-prod`, Basic tier, PostgreSQL 18, SFO2, in the noCluHub VPC). Adding a database to the existing cluster is a no-op for billing and operationally simpler than a second cluster.
-- **Databases.** `noclucal_dev` (local Mac via `docker-compose.dev.yml`, host port 5434 to avoid clashing with noclulabs' 5433), `noclucal_test` (CI service container, ephemeral; wired in Phase 1c), `noclucal_prod` (DO managed cluster, provisioned 2026-05-26). Separate databases (not schemas) for engine-enforced isolation.
-- **Connection module.** `src/lib/db/index.ts` exports `pool`, `db`, and `closeDb()`. Lazy initialization via a Proxy: importing the module has zero side effects; the `Pool` and Drizzle client are constructed on first property access. An error is thrown at that point if `DATABASE_URL` is unset. This is load-bearing because Next.js's build-time page-data collection loads route modules that transitively import the DB without `DATABASE_URL` being set; eager init at import time would crash the build. Pool config: max 10 connections, 30s idle timeout, 5s connection timeout. Mirrors noclulabs' Phase 3a pattern exactly.
-- **Drizzle instance without schema.** Phase 1b's `db = drizzle(pool)` has no schema arg. The typed `db.query.<table>` accessors come online in 1c when the first schema files land in `src/lib/db/schema/` and the `drizzle()` call is refactored to `drizzle(pool, { schema })`.
+- **Databases.** `noclucal_dev` (local Mac via `docker-compose.dev.yml`, host port 5434 to avoid clashing with noclulabs' 5433), `noclucal_test` (CI service container, ephemeral), `noclucal_prod` (DO managed cluster, provisioned 2026-05-26). Separate databases (not schemas) for engine-enforced isolation.
+- **Connection module.** `src/lib/db/index.ts` exports `pool`, `db`, `closeDb()`, and re-exports `schema`. Lazy initialization via a Proxy: importing the module has zero side effects; the `Pool` and Drizzle client are constructed on first property access. An error is thrown at that point if `DATABASE_URL` is unset. This is load-bearing because Next.js's build-time page-data collection loads route modules that transitively import the DB without `DATABASE_URL` being set; eager init at import time would crash the build. Pool config: max 10 connections, 30s idle timeout, 5s connection timeout. Mirrors noclulabs' Phase 3a pattern exactly.
+- **Drizzle instance with schema.** As of Phase 1c, `db = drizzle(getPool(), { schema })`, so `db.query.noclucalUsers` is typed. New tables added to `src/lib/db/schema/` show up automatically once their file is exported from `schema/index.ts`.
 - **Smoke test.** `pnpm db:smoke` runs `scripts/db-smoke-test.ts`, which fires `SELECT version()`, `SELECT 1`, and `SELECT NOW()` against the pool. Permanent diagnostic infrastructure; answers "is the database reachable right now?" without depending on any schema. Mirrors noclulabs' equivalent.
 - **SSL workaround (critical).** Every `DATABASE_URL` used by node-pg / drizzle-orm / drizzle-kit MUST end with `&uselibpqcompat=true`. Same reason as noclulabs: DO's self-signed cert plus node-pg's `pg-connection-string` library treating `sslmode=require` as `verify-full`. `psql` does NOT need the suffix (libpq honors `sslmode=require` correctly out of the box). Local dev does not need the suffix either (no SSL on the local Postgres). The SSL workaround is identical to noclulabs' implementation; the droplet ops command pattern for stripping the suffix when shelling into psql lives in noclulabs' CLAUDE.md § Database / Production and applies here verbatim.
 - **Two-URL pattern.** Public URL (Mac ops, Trusted Sources lists the developer's Mac IP) and VPC URL (droplet runtime, never leaves the VPC), both stored in Bitwarden under the noClu Infrastructure folder.
-- **UUID PKs.** Postgres 18 native `uuidv7()` (time-ordered, no extension required). Schema lands in 1c.
-- **Migrations.** Drizzle migrations in `drizzle/migrations/`, append-only, applied at deploy time via the `migrate` Docker Compose profile (Phase 1c, mirroring noclulabs' pattern). `drizzle.config.ts` already points drizzle-kit at `./src/lib/db/schema/*.ts` and `./drizzle/migrations/`.
+- **UUID PKs.** Postgres 18 native `uuidv7()` (time-ordered, no extension required). Not used yet by `noclucal_users` because the id comes from the noclulabs JWT, not from the DB.
+
+### Schema
+
+- **`noclucal_users`** (Phase 1c). Shadow table projecting the authoritative users table that lives in the noclulabs DB. Columns:
+  - `id` (uuid, primary key, no default; set from the noclulabs JWT)
+  - `username` (citext, not null; cached for case-insensitive joins)
+  - `display_name` (text, nullable; cached for UI)
+  - `observed_at` (timestamptz, not null, default `now()`; first observation timestamp)
+
+  No FK to anything; noclulabs is the source of truth and noCluCal never writes back. Rows are inserted lazily on first observation of each user (helper ships in Phase 1d). When `username` or `display_name` change on the noclulabs side, the lazy observer must refresh them; exact refresh policy ships with the helper.
+
+### Migrations
+
+- **Workflow.** Edit a schema file, then `pnpm db:generate` produces SQL in `drizzle/migrations/`. Inspect the file. If a new Postgres extension is required (citext, pgcrypto, etc.), hand-edit the SQL to prepend `CREATE EXTENSION IF NOT EXISTS <name>;\n--> statement-breakpoint` before the first statement that depends on it (Drizzle does NOT auto-generate extension creation). Then `pnpm db:migrate` applies against local dev.
+- **Statement breakpoints.** `--> statement-breakpoint` is Drizzle's convention for splitting one migration file into multiple SQL statements at runtime. Without it the file is one statement, and an extension-then-extension-column-type combo fails to apply.
+- **Deploy.** On every merge to `main`, `deploy.yml` runs `docker compose --profile migrate run --rm --build migrate` before rebuilding the web container. Drizzle's `__drizzle_migrations` tracking table makes this idempotent: already-applied migrations are skipped. The order (migrate, then rebuild) suits additive migrations. For a migration that drops a column or otherwise breaks the previous app code, flip the order for that deploy (build first, migrate second).
+- **CI.** `ci.yml` spins up a `postgres:18-alpine` service container, sets `DATABASE_URL` at the job level, and runs `pnpm db:test:setup` (which shells out to `pnpm db:migrate:deploy`) before lint. No tests use the DB yet; infrastructure lives now so Phase 1d slots in cleanly.
 
 ## Auth (planned, Phase 1)
 
