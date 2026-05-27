@@ -10,7 +10,7 @@ Version targets and planned work for noCluCal.
 - Phase 1a (foundation scaffold and CI/CD chain): complete (2026-05-26). Next.js 16 scaffold, Tailwind v4, Vitest harness, multi-stage Dockerfile, GitHub Actions CI and Deploy. Site live at https://cal.noclulabs.com with the placeholder homepage.
 - Phase 1b (database wiring): complete (2026-05-26). Drizzle + `pg` connection module at `src/lib/db/index.ts` (lazy-init, max 10 pool, libpqcompat documented), `docker-compose.dev.yml` for local Postgres 18 on host port 5434, `pnpm db:smoke` validates connectivity. No schema yet.
 - Phase 1c (first migration, migrator stage, CI test DB): complete (2026-05-27). First schema (`noclucal_users` shadow table) and first migration shipped. Migrator Docker stage and `migrate` Compose profile wired into `deploy.yml` so migrations apply before the web container rebuilds. CI gained a `postgres:18-alpine` service container and the `db:test:setup` step.
-- Phase 1d (Auth.js v5 in SSO RP mode): ready. Edge-safe / server-only config split, empty providers array, cookie domain `.noclulabs.com`, `proxy.ts` redirecting unauthenticated visitors to noclulabs.com/signin, first SSO bridge integration test, and the `noclucal_users` lazy-upsert helper.
+- Phase 1d (Auth.js v5 in SSO RP mode): complete (2026-05-27). Edge-safe / server-only config split (`auth.config.ts` / `auth.ts` / `proxy.ts`), empty providers array, cookie domain `.noclulabs.com` in production, NextAuth handlers route, `noclucal_users` lazy-upsert helper, and the `/me` proof-of-life page. Phase 1 closed; Phase 2 (Google Calendar provider) ready.
 
 ---
 
@@ -58,12 +58,15 @@ Sets up the Next.js 16 + Drizzle + Auth.js skeleton with the SSO bridge wired an
 - [x] Extend `deploy.yml` to run `docker compose --profile migrate run --rm --build migrate` before rebuilding the web container.
 - [ ] `noclucal_users` projection write helper: on first observation of a user (any authenticated request where the user_id is not yet in `noclucal_users`), insert a row with cached username and display_name. Moved to Phase 1d to ship alongside the SSO bridge wiring that triggers the first observation.
 
-### Phase 1d: Auth.js v5 SSO-RP mode
+### Phase 1d: Auth.js v5 SSO-RP mode (complete)
 
-- [ ] `auth.config.ts` (edge-safe, augmentations match noclulabs' JWT shape exactly), `auth.ts` (no providers), `proxy.ts` (Next.js 16 replacement for middleware; redirects unauthenticated visitors to `noclulabs.com/signin?redirect=...`).
-- [ ] Cookie domain `.noclulabs.com`. Shared `AUTH_SECRET` documented in `.env.example` with explicit note that it MUST match noclulabs' value.
-- [ ] First integration test: verify the SSO bridge accepts a JWT signed by noclulabs' `AUTH_SECRET` and rejects one signed by a different secret.
-- [ ] `noclucal_users` lazy-upsert helper invoked on first observation of an authenticated user.
+- [x] `auth.config.ts` (edge-safe, augmentations match noclulabs' JWT shape exactly: `{ id, username, role, signedInAt?, deviceId? }`), `auth.ts` (no providers), `proxy.ts` (Next.js 16 replacement for middleware; redirects unauthenticated visitors to `noclulabs.com/signin?redirect=...`).
+- [x] Cookie domain `.noclulabs.com` in production (gated on `AUTH_URL` starting with `https://`). `__Secure-` cookie name prefix applied in lockstep. Shared `AUTH_SECRET` documented in `.env.example` with explicit note that it MUST match noclulabs' value.
+- [x] NextAuth handlers route at `src/app/api/auth/[...nextauth]/route.ts`.
+- [x] `noclucal_users` lazy-upsert helper at `src/lib/auth/upsert-noclucal-user.ts`. Best-effort: failures are logged but never break renders. Idempotent via `INSERT ... ON CONFLICT (id) DO UPDATE`.
+- [x] `/me` proof-of-life page: calls `auth()`, runs the lazy upsert, renders the session payload.
+- [x] Vitest config extended to load `.env.local` so DB-touching tests pick up `DATABASE_URL` locally; CI continues to set it at the job level. Three-case upsert test exercises insert, update, and null-displayName paths against the local / CI Postgres.
+- [ ] First SSO bridge integration test (validating accept/reject for JWTs signed by the noclulabs secret vs a different secret). Deferred from 1d; the proof-of-life manual ops described in the PR cover the same ground until a second integration test target lands.
 
 ## Phase 2: Google Calendar provider
 

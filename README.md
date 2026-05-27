@@ -20,7 +20,7 @@ Identity federates from noclulabs.com via a shared-cookie SSO bridge. One noClu 
 
 ## Status
 
-Phase 1c complete. First schema and migration live in production. `noclucal_prod` now has `noclucal_users` (shadow table) and `__drizzle_migrations` (tracking). Phase 1d (Auth.js v5 in SSO RP mode) is next.
+Phase 1d complete. Auth.js v5 in SSO RP mode is wired. cal.noclulabs.com reads the session cookie set by noclulabs.com, verifies the JWT with the shared `AUTH_SECRET`, and propagates the session. Visit `/me` while signed in to noclulabs to confirm the bridge works. Phase 1 is closed; Phase 2 (Google Calendar provider) is next.
 
 ## Getting started
 
