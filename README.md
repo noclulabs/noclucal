@@ -20,11 +20,40 @@ Identity federates from noclulabs.com via a shared-cookie SSO bridge. One noClu 
 
 ## Status
 
-Phase 0 in progress. Bible files seeded; no code yet. See `ROADMAP.md` for the planned arc.
+Phase 1a complete. Site responds at https://cal.noclulabs.com with a placeholder homepage. Phase 1b (database wiring) is next.
 
 ## Getting started
 
-Not yet runnable. Phase 1 introduces the scaffold, env template, and local dev instructions.
+### Prerequisites
+
+- Node.js 20+
+- pnpm 10.33.0 (the repo pins `packageManager` so tools resolve the exact version automatically)
+
+### Setup
+
+```bash
+git clone https://github.com/noclulabs/noclucal.git
+cd noclucal
+pnpm install
+cp .env.example .env.local
+pnpm dev
+```
+
+Open http://localhost:3000.
+
+For the SSO bridge with noclulabs.com to work in production, `AUTH_SECRET` in `.env.local` must match the noclulabs value. In dev, any random 32-byte base64 string works (generate with `openssl rand -base64 32`); the cookie domain is not set in dev mode, so local sessions stay local.
+
+### Commands
+
+```bash
+pnpm dev          # Start dev server
+pnpm build        # Production build
+pnpm start        # Start production server
+pnpm lint         # Run ESLint
+pnpm type-check   # TypeScript type checking
+pnpm test         # Run Vitest suite
+pnpm test:watch   # Run Vitest in watch mode
+```
 
 ## Bible files
 

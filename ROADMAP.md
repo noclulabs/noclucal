@@ -6,32 +6,55 @@ Version targets and planned work for noCluCal.
 
 ## Status snapshot
 
-- Phase 0 (Bible seeding): in flight. This PR creates the four canonical bible files plus a standard `.gitignore`. Captures all architectural decisions made in the architect/executor design session. No code in this PR.
+- Phase 0 (Bible seeding): complete (2026-05-26).
+- Phase 1a (foundation scaffold and CI/CD chain): complete (2026-05-26). Next.js 16 scaffold, Tailwind v4, Vitest harness, multi-stage Dockerfile, GitHub Actions CI and Deploy. Site live at https://cal.noclulabs.com with the placeholder homepage.
+- Phase 1b (database wiring): ready. Drizzle + `pg`, `src/lib/db/` connection module, `docker-compose.dev.yml` for local Postgres on host port 5434.
 
 ---
 
-## Phase 0: Bible seeding (in flight)
+## Phase 0: Bible seeding (complete)
 
-- [ ] Create `CLAUDE.md`, `README.md`, `ROADMAP.md`, `CHANGELOG.md` at repo root.
-- [ ] Create `.gitignore` (standard Node + Next.js + .env*).
-- [ ] Capture architectural decisions: stack, SSO bridge to noclulabs, separate database in shared DO Managed Postgres cluster, `CalendarProvider` interface, deployment shape mirroring noclulabs and portalNetwork.
-- [ ] No code, no `package.json`, no scaffold.
+- [x] Create `CLAUDE.md`, `README.md`, `ROADMAP.md`, `CHANGELOG.md` at repo root.
+- [x] Create `.gitignore` (standard Node + Next.js + .env*).
+- [x] Capture architectural decisions: stack, SSO bridge to noclulabs, separate database in shared DO Managed Postgres cluster, `CalendarProvider` interface, deployment shape mirroring noclulabs and portalNetwork.
+- [x] No code, no `package.json`, no scaffold.
 
 ## Phase 1: Repo scaffold
 
-Sets up the Next.js 16 + Drizzle + Auth.js skeleton with the SSO bridge wired and the production deploy path validated end-to-end. This is the longest phase by PR count; expect a multi-prompt arc.
+Sets up the Next.js 16 + Drizzle + Auth.js skeleton with the SSO bridge wired and the production deploy path validated end-to-end. Split into 1a (scaffold + CI/CD), 1b (database), 1c (migrator), 1d (Auth.js RP).
 
-- [ ] Next.js 16 App Router scaffold with `output: "standalone"`, TypeScript strict, Tailwind v4, ESLint, ESLint Next config, Vitest harness.
+### Phase 1a: foundation scaffold and CI/CD chain (complete)
+
+- [x] Next.js 16 App Router scaffold with `output: "standalone"`, TypeScript strict, Tailwind v4, ESLint, ESLint Next config, Vitest harness.
+- [x] Placeholder homepage at `/` with the noClu voice (sentence case, no exclamation marks, no em dashes).
+- [x] Indigo Signal palette duplicated from noclulabs in `src/app/globals.css` (no runtime coupling).
+- [x] Space Grotesk via `next/font/google`, exposed as `--font-sans`.
+- [x] Vitest harness with jsdom, `@/` path alias, smoke test verifying the alias resolves.
+- [x] Multi-stage Dockerfile (deps / build / runner on `node:20-alpine`).
+- [x] `docker-compose.yml` mapping host port 3002 to container port 3000.
+- [x] GitHub Actions `ci.yml` (lint, type-check, test, build) and `deploy.yml` (SSH to droplet, pull, rebuild).
+- [x] `.env.example` with Auth.js v5 RP-mode variables.
+- [x] `robots.txt` blocking all crawlers until the booking flow ships.
+- [x] Caddy reverse proxy block for `cal.noclulabs.com` deployed manually to the droplet during Phase 1a ops.
+
+### Phase 1b: database wiring
+
 - [ ] Drizzle ORM + `pg` driver. `src/lib/db/` connection module mirroring noclulabs (lazy init, max 10 pool, libpqcompat suffix verified).
+- [ ] `docker-compose.dev.yml` for local Postgres on host port 5434 (avoid clash with noclulabs' 5433).
 - [ ] First Drizzle migration: `noclucal_users` shadow table (id + cached username + display_name), `calendar_connections` (polymorphic, encrypted token storage), `event_types`, `availability_rules`, `bookings`. Uuidv7 PKs, citext where appropriate, soft-delete via `deleted_at`.
-- [ ] Auth.js v5 in SSO-RP mode: `auth.config.ts` (edge-safe, augmentations match noclulabs' JWT shape exactly), `auth.ts` (no providers), `proxy.ts` (Next.js 16 replacement for middleware; redirects unauthenticated visitors to `noclulabs.com/signin?redirect=...`).
-- [ ] Cookie domain `.noclulabs.com`. Shared `AUTH_SECRET` documented in `.env.example` with explicit note that it MUST match noclulabs' value.
-- [ ] Multi-stage Dockerfile (deps / build / runner / migrator stages, mirroring noclulabs).
-- [ ] `docker-compose.yml` with `migrate` profile. `docker-compose.dev.yml` for local Postgres on host port 5434 (avoid clash with noclulabs' 5433).
-- [ ] GitHub Actions `ci.yml` and `deploy.yml`, mirroring noclulabs with the `migrate` profile invocation.
-- [ ] Caddy reverse proxy config for `cal.noclulabs.com` (documented in README; deployed manually to droplet during Phase 1 ops).
-- [ ] First integration test: verify the SSO bridge accepts a JWT signed by noclulabs' `AUTH_SECRET` and rejects one signed by a different secret.
 - [ ] `noclucal_users` projection write helper: on first observation of a user (any authenticated request where the user_id is not yet in `noclucal_users`), insert a row with cached username and display_name.
+
+### Phase 1c: migrator stage and deploy migrate profile
+
+- [ ] Add migrator Dockerfile stage mirroring noclulabs.
+- [ ] Add `migrate` profile to `docker-compose.yml`.
+- [ ] Extend `deploy.yml` to run `docker compose run migrate` before rebuilding the web container.
+
+### Phase 1d: Auth.js v5 SSO-RP mode
+
+- [ ] `auth.config.ts` (edge-safe, augmentations match noclulabs' JWT shape exactly), `auth.ts` (no providers), `proxy.ts` (Next.js 16 replacement for middleware; redirects unauthenticated visitors to `noclulabs.com/signin?redirect=...`).
+- [ ] Cookie domain `.noclulabs.com`. Shared `AUTH_SECRET` documented in `.env.example` with explicit note that it MUST match noclulabs' value.
+- [ ] First integration test: verify the SSO bridge accepts a JWT signed by noclulabs' `AUTH_SECRET` and rejects one signed by a different secret.
 
 ## Phase 2: Google Calendar provider
 
