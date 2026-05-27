@@ -30,5 +30,6 @@ All notable changes to noCluCal will be documented in this file. Format follows 
 
 ### Fixed
 
+- fix(dockerfile): moved the migrator stage to sit between `build` and `runner` so that `runner` remains the last (default) build target. The Phase 1c Dockerfile placed `migrator` last; docker-compose.yml's `web` service does not specify `target:`, so Docker defaulted to building the migrator stage for `web`. The web container ran `pnpm db:migrate:deploy`, exited 0 after migrations applied, and the restart policy relaunched it in an infinite loop. Migrations applied correctly (the table exists in `noclucal_prod`), but the Next.js runtime never started, so cal.noclulabs.com returned 502 from Caddy for ~20 minutes after the 1c deploy. The migrate Compose profile uses `target: migrator` explicitly, so it is unaffected by the reorder.
 - ops(phase-1a-followup): Caddy access log block for cal.noclulabs.com removed from `/etc/caddy/Caddyfile` on the droplet because `/var/log/caddy/` is not writable by the Caddy user. Logged in ROADMAP as a deferred polish item; re-enable later by pre-creating the log file with the correct ownership.
 - chore(phase-1a): rename `gitignore` (committed without the leading dot in Phase 0) to `.gitignore` so git actually honors the ignore rules.
