@@ -310,6 +310,55 @@ code that catches a decryption error should treat the connection as broken,
 delete the row, and prompt the user to reconnect. The crypto module itself
 never logs key material or partial ciphertext.
 
+### Google Calendar provider
+
+`src/lib/calendar/providers/google.ts` exports `googleCalendarProvider`, an
+implementation of `CalendarProvider` over the official `googleapis` SDK.
+Stateless: tokens are method arguments. Client credentials (`GOOGLE_CLIENT_ID`,
+`GOOGLE_CLIENT_SECRET`) are loaded lazily from `process.env`, matching the
+pattern in `crypto.ts`. Module import has no side effects.
+
+OAuth scope list (final, four entries): `openid`, `email`,
+`https://www.googleapis.com/auth/calendar.events`,
+`https://www.googleapis.com/auth/calendar.readonly`. The `openid` and `email`
+scopes are required for Google to return an `id_token` with the `sub` and
+`email` claims that populate `externalAccountId` and `externalAccountEmail`.
+
+The authorization URL passes `access_type: "offline"` so Google returns a
+refresh token, and `prompt: "consent"` so the consent screen always shows
+(otherwise Google omits the refresh token on re-auth, silently breaking the
+reconnect flow).
+
+`exchangeCode` verifies the id_token via `OAuth2.verifyIdToken` (signature,
+audience, issuer, expiry checked against Google's public keys) before
+extracting `sub` and `email`. Parsing without verification would let a MitM
+with a fake id_token spoof account identity, and we do not skip this even
+though TLS makes the attack unlikely.
+
+`email_verified` is intentionally NOT enforced. Most Google accounts are
+verified, but rejecting unverified emails would create unhelpful failures
+for otherwise-valid connections. The email is display-only in our system.
+
+`refreshAccessToken` preserves the caller's refresh token if Google does not
+rotate it (Google sometimes returns a new refresh_token on refresh, sometimes
+does not; the interface requires `refreshToken` always be populated).
+
+`revoke` targets the refresh token via `OAuth2.revokeToken`. Revoking the
+refresh token also invalidates all access tokens issued from it.
+
+`createEvent` opts into Google Meet via `withConference: true`. The request
+includes `conferenceData.createRequest` with a fresh UUID `requestId` and
+`conferenceSolutionKey.type: "hangoutsMeet"`, and the API call passes
+`conferenceDataVersion: 1`. Without `withConference`, no conferencing payload
+is sent.
+
+`src/lib/calendar/providers/register-all.ts` is a side-effecting wiring module
+that imports the Google provider and calls `registerProvider`. Server entry
+points (Phase 2d's OAuth callback route is the first) import this file once
+at startup, before any code path that calls `getProvider`. Phase 2c ships the
+file but does not yet import it from production code; the dedicated test
+verifies the registration works.
+
 ## Known minor issues
 
 - **Caddy access log block removed during Phase 1a ops.** The `log {}` block for `cal.noclulabs.com` was stripped from `/etc/caddy/Caddyfile` because `/var/log/caddy/` is not writable by the Caddy user on the droplet. Re-enable by pre-creating the log file with `caddy:caddy` ownership before adding the `log {}` block back. Not blocking; access logs are nice-to-have.

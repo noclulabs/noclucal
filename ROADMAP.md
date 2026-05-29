@@ -13,6 +13,7 @@ Version targets and planned work for noCluCal.
 - Phase 1d (Auth.js v5 in SSO RP mode): complete (2026-05-27). Edge-safe / server-only config split (`auth.config.ts` / `auth.ts` / `proxy.ts`), empty providers array, cookie domain `.noclulabs.com` in production, NextAuth handlers route, `noclucal_users` lazy-upsert helper, and the `/me` proof-of-life page. Phase 1 closed; Phase 2 (Google Calendar provider) ready.
 - Phase 2a (CalendarProvider interface and calendar_connections schema): complete (2026-05-29). Interface contract, provider registry stubs, calendar_connections schema with unique-per-provider constraint, and migration shipped. No Google code yet; that lands in Phase 2b.
 - Phase 2b (token encryption helpers): complete (2026-05-29). AES-256-GCM helpers at `src/lib/calendar/crypto.ts` with versioned `v1:base64nonce:base64ciphertext` ciphertext format, lazy key loading, and 14-case test coverage including tamper detection and cross-key rejection.
+- Phase 2c (Google Calendar provider implementation): complete (2026-05-29). `googleCalendarProvider` at `src/lib/calendar/providers/google.ts` implements every method on `CalendarProvider` over the `googleapis` SDK. `register-all.ts` wiring module ships. 42-case test suite stubs the SDK and verifies the call shape of every interface method.
 
 ---
 
@@ -93,12 +94,14 @@ busy-time reads. Webhook subscriptions are deferred (see "Deferred items").
 - [x] `.env.example` updated with `TOKEN_ENCRYPTION_KEY` documentation and the `openssl rand -base64 32` generation command.
 - [x] 14-case Vitest suite covering round trip, empty-string and unicode plaintexts, nonce uniqueness across calls, tamper detection in ciphertext / auth tag / nonce, unknown-version rejection, malformed-format rejection, missing-key error, wrong-length-key error, and cross-key decryption failure.
 
-### Phase 2c: Google Calendar provider implementation
+### Phase 2c: Google Calendar provider implementation (complete)
 
-- [ ] `GoogleCalendarProvider` at `src/lib/calendar/providers/google.ts` implementing every method on `CalendarProvider`. Uses the `googleapis` SDK.
-- [ ] Side-effecting `src/lib/calendar/providers/register-all.ts` that imports `./google` and calls `registerProvider`. Server entry points import this module once at startup.
-- [ ] `googleapis` added to dependencies.
-- [ ] Unit tests stub the `googleapis` SDK and verify each `CalendarProvider` method calls the right SDK method with the right arguments. No live Google calls in 2c.
+- [x] `googleCalendarProvider` at `src/lib/calendar/providers/google.ts` implementing every method on `CalendarProvider`. Uses the `googleapis` SDK. Stateless; tokens passed as method arguments. Client credentials lazy-loaded from env.
+- [x] Side-effecting `src/lib/calendar/providers/register-all.ts` that imports `./google` and calls `registerProvider`. 2d's OAuth route will be the first production import; 2c ships the file with its own test verifying registration works.
+- [x] `googleapis` added to dependencies.
+- [x] 42-case Vitest suite stubs `googleapis` via `vi.mock` and verifies each `CalendarProvider` method calls the right SDK method with the right arguments. No live Google calls.
+- [x] OAuth scope list locked at four entries: `openid`, `email`, `calendar.events`, `calendar.readonly`. The `openid` + `email` pair is required for Google to return an id_token with the `sub` and `email` claims.
+- [x] id_token verification via `OAuth2.verifyIdToken` is mandatory in `exchangeCode`; `email_verified` is intentionally NOT enforced.
 
 ### Phase 2d: OAuth routes, connect/disconnect actions, `/settings/calendars` page
 
