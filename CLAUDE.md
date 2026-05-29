@@ -219,6 +219,8 @@ Database wiring landed in Phase 1b; first schema and first migration landed in P
 
   No FK to anything; noclulabs is the source of truth and noCluCal never writes back. Rows are inserted lazily on first observation of each user (helper ships in Phase 1d). When `username` or `display_name` change on the noclulabs side, the lazy observer must refresh them; exact refresh policy ships with the helper.
 
+- **`calendar_connections`** (Phase 2a). One row per OAuth-connected external calendar account. `user_id` FK to `noclucal_users.id` (cascade delete), `provider` discriminator, encrypted token ciphertext columns (`v1:base64nonce:base64ciphertext` format), `scopes text[]`, plus `connected_at` / `last_synced_at`. Unique index on `(user_id, provider)` enforces one account per provider for the MVP. See the calendar abstraction layer section for the full design.
+
 ### Migrations
 
 - **Workflow.** Edit a schema file, then `pnpm db:generate` produces SQL in `drizzle/migrations/`. Inspect the file. If a new Postgres extension is required (citext, pgcrypto, etc.), hand-edit the SQL to prepend `CREATE EXTENSION IF NOT EXISTS <name>;\n--> statement-breakpoint` before the first statement that depends on it (Drizzle does NOT auto-generate extension creation). Then `pnpm db:migrate` applies against local dev.
@@ -249,6 +251,40 @@ Phase 2 introduces a `CalendarProvider` interface so the booking core never depe
 - **Storage.** A polymorphic `calendar_connections` table with `provider` (text discriminator) and `config` (jsonb for provider-specific data like encrypted refresh tokens and channel IDs). OAuth refresh tokens are encrypted at rest using a separate key from `AUTH_SECRET`.
 - **First provider.** Google Calendar via `googleapis`. Microsoft Graph, CalDAV, and a first-party noClu calendar are post-Phase-2 work.
 - **Registry pattern.** Providers register themselves in `src/lib/calendar/providers/index.ts` (analogous to noclulabs' animation registry). The booking core resolves a provider by discriminator and never branches on type.
+
+## Calendar abstraction layer
+
+External calendar integrations (Google, Microsoft, CalDAV, etc.) implement
+the `CalendarProvider` interface defined at `src/lib/calendar/types.ts`.
+Providers are stateless: tokens are passed as arguments to every method,
+never held on a provider instance. This keeps providers easy to test and
+prevents cross-request token leakage.
+
+Concrete providers live at `src/lib/calendar/providers/<id>.ts` and are
+registered via `registerProvider` in `src/lib/calendar/providers/index.ts`.
+Phase 2b adds a side-effecting `register-all.ts` that imports and registers
+each concrete provider; server entry points import `register-all` once at
+startup before any code path that calls `getProvider`.
+
+Webhook subscription methods are intentionally NOT part of the
+`CalendarProvider` interface yet. Watch channel renewal needs BullMQ for
+recurring jobs, which lands with Redis in Phase 4. When webhooks ship, they
+go on a separate extension interface that webhook-capable providers
+implement in addition to the base `CalendarProvider`.
+
+### Storage shape
+
+`calendar_connections` is the storage table for OAuth-connected calendars.
+Schema lives at `src/lib/db/schema/calendar-connections.ts`. One row per
+(user, provider) for the MVP, enforced by a unique index. Disconnect is a
+hard DELETE; there is no soft-delete column.
+
+Access and refresh tokens are stored as ciphertext strings in the format
+`v1:base64nonce:base64ciphertext`. The `v1:` prefix is a version marker so
+we can rotate the encryption key without a schema change (a future `v2:`
+prefix will indicate ciphertext produced by the next key). Encryption
+helpers ship in Phase 2b; Phase 2a's schema accepts the columns as plain
+text with no crypto applied.
 
 ## Deployment (planned, Phase 1)
 
