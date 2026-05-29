@@ -64,7 +64,7 @@ The noClu design system is defined in `noclulabs.com/docs/noclu-brand-style-guid
 - **Elevation:** Background color shifts only (`canvas` > `surface` > `surface-elevated`). No box shadows as primary elevation.
 - **Voice:** Minimal. Let the work speak. No exclamation marks. No marketing superlatives.
 
-Tokens are duplicated into noCluCal's `globals.css` (planned for Phase 1) rather than imported from noclulabs, to avoid runtime coupling. When tokens change in the brand style guide, both repos update in lockstep.
+Tokens are duplicated into noCluCal's `globals.css` (shipped in Phase 1a) rather than imported from noclulabs, to avoid runtime coupling. When tokens change in the brand style guide, both repos update in lockstep.
 
 ## Identity bridge (SSO with noclulabs.com)
 
@@ -74,7 +74,7 @@ noCluCal is a relying party to noclulabs.com's identity. Mechanics:
 - **Shared AUTH_SECRET.** Both apps share the same `AUTH_SECRET` (managed in Bitwarden under the noClu Infrastructure folder). This lets noCluCal verify the JWT signature locally without an HTTP round-trip to noclulabs.
 - **JWT shape.** Mirrors noclulabs exactly: `{ id, username, role: "user" | "admin", signedInAt: number }`. noCluCal augments `Session["user"]` and `JWT` with the same module declarations in its own `auth.config.ts`. If the shape changes in noclulabs, noCluCal must follow in lockstep.
 - **No providers in noCluCal.** noCluCal does NOT run Credentials, OAuth, or any sign-in flow of its own. The Auth.js providers array is empty. All authentication happens at noclulabs.com/signin.
-- **Sign-in redirect.** When an unauthenticated visitor hits a protected page on cal.noclulabs.com, the proxy redirects to `https://noclulabs.com/signin?redirect=https://cal.noclulabs.com/<original-path>` (URL-encoded). noclulabs.com's existing same-origin redirect sanitizer must be extended to allow `cal.noclulabs.com` as a trusted target, OR the redirect logic is generalized to a noClu-suite-aware sanitizer. Decision deferred to Phase 1 implementation.
+- **Sign-in redirect.** When an unauthenticated visitor hits a protected page on cal.noclulabs.com, the proxy redirects to `https://noclulabs.com/signin?redirect=https://cal.noclulabs.com/<original-path>` (URL-encoded). noclulabs.com's existing same-origin redirect sanitizer was extended in noclulabs PR #143 to allow `cal.noclulabs.com` (and future suite domains) as trusted targets. Cookie domain was also widened to `.noclulabs.com` at that time.
 - **No DB writes to noclulabs.** noCluCal NEVER writes to noclulabs' users table. References to users are by external user ID only, stored in noCluCal's own `noclucal_users` shadow table (a lightweight projection: user_id PK plus cached `username` / `display_name` for joins, updated lazily on first observation of each user).
 - **Session revocation deferred.** noclulabs.com revokes sessions on password change via the `signedInAt < password_changed_at` check in its DB-capable session callback. noCluCal does NOT replicate that check at Phase 1, because doing so would require either a DB lookup against noclulabs (architectural violation) or an HTTP round-trip per page render (latency tax). Trade-off: a revoked noclulabs session remains valid in noCluCal until the JWT naturally expires (Auth.js default 30 days). Logged as a deferred item in ROADMAP. Options for closing the gap when there are real users: (a) noclulabs exposes a `/api/auth/validate-session` endpoint that noCluCal pings on session resolution, with caching to amortize cost; (b) promote noclulabs.com to a proper OIDC provider with token introspection.
 
@@ -149,13 +149,19 @@ noclucal/
 
 Phase 1d added the Auth.js v5 RP-mode config split (`src/auth.config.ts`, `src/auth.ts`, `src/proxy.ts`), the NextAuth handlers route (`src/app/api/auth/[...nextauth]/route.ts`), the `noclucal_users` lazy upsert helper (`src/lib/auth/upsert-noclucal-user.ts`), and the `/me` proof-of-life page (`src/app/me/page.tsx`).
 
-## Deployment / actual state
+## Deployment
 
 - Live at https://cal.noclulabs.com with the placeholder homepage.
 - Host port 3002 confirmed in use (portalNetwork = 3000, noclulabs = 3001, noCluCal = 3002).
 - Caddy block for `cal.noclulabs.com` is live on the droplet, terminating TLS and proxying to `127.0.0.1:3002`.
 - First manual deploy ops (clone to `/opt/noclucal`, create `.env`, add Caddy block) happened on 2026-05-26 alongside this PR.
 - As of Phase 1c, `deploy.yml` runs `git pull` → `docker compose --profile migrate run --rm --build migrate` → `docker compose up -d --build` → `docker image prune -f`. Migrations apply against `noclucal_prod` before the new web container starts.
+
+### Dockerfile stage ordering
+
+The Dockerfile defines four stages in this order: `deps` → `build` → `migrator` → `runner`. The order is load-bearing: `docker-compose.yml`'s `web` service does NOT specify a `target:` directive, so Docker builds the LAST stage by default. `runner` must remain last for `web` to build the Next.js runtime image. The `migrate` Compose service uses `target: migrator` explicitly, so it is unaffected by where `migrator` sits in the file as long as it exists.
+
+Phase 1c shipped with `migrator` as the last stage and production restart-looped on the migrator's CMD until this was caught and fixed.
 
 ## Conventions
 
@@ -217,7 +223,7 @@ Database wiring landed in Phase 1b; first schema and first migration landed in P
   - `display_name` (text, nullable; cached for UI)
   - `observed_at` (timestamptz, not null, default `now()`; first observation timestamp)
 
-  No FK to anything; noclulabs is the source of truth and noCluCal never writes back. Rows are inserted lazily on first observation of each user (helper ships in Phase 1d). When `username` or `display_name` change on the noclulabs side, the lazy observer must refresh them; exact refresh policy ships with the helper.
+  No FK to anything; noclulabs is the source of truth and noCluCal never writes back. Rows are inserted lazily on first observation of each user via `src/lib/auth/upsert-noclucal-user.ts` (shipped in Phase 1d). When `username` or `display_name` change on the noclulabs side, the lazy upsert refreshes them via `ON CONFLICT (id) DO UPDATE`.
 
 - **`calendar_connections`** (Phase 2a). One row per OAuth-connected external calendar account. `user_id` FK to `noclucal_users.id` (cascade delete), `provider` discriminator, encrypted token ciphertext columns (`v1:base64nonce:base64ciphertext` format), `scopes text[]`, plus `connected_at` / `last_synced_at`. Unique index on `(user_id, provider)` enforces one account per provider for the MVP. See the calendar abstraction layer section for the full design.
 
@@ -242,15 +248,6 @@ Auth.js v5 is wired in SSO relying-party mode as of Phase 1d. All authentication
 - **NextAuth handlers.** `src/app/api/auth/[...nextauth]/route.ts` re-exports `GET` and `POST` from `@/auth`. Required even in RP-only mode for the session endpoint.
 - **Lazy upsert.** `src/lib/auth/upsert-noclucal-user.ts` performs an `INSERT ... ON CONFLICT (id) DO UPDATE` into `noclucal_users` on each authenticated page render. Best-effort: failures are logged but never break the render. Callers wrap in `try/catch`.
 - **Env vars.** Same set as noclulabs: `AUTH_SECRET` (MUST match noclulabs' value exactly), `AUTH_URL` (`https://cal.noclulabs.com` in prod), `AUTH_TRUST_HOST=true` (required behind the Caddy reverse proxy).
-
-## Calendar provider abstraction (planned, Phase 2)
-
-Phase 2 introduces a `CalendarProvider` interface so the booking core never depends on a specific provider. Confirmed architectural decisions:
-
-- **Interface.** Methods: `listBusyTimes(range)`, `createEvent(details)`, `cancelEvent(id)`, `watchChanges(callback)`. Each implementation handles its own auth (OAuth tokens, refresh, webhook subscriptions).
-- **Storage.** A polymorphic `calendar_connections` table with `provider` (text discriminator) and `config` (jsonb for provider-specific data like encrypted refresh tokens and channel IDs). OAuth refresh tokens are encrypted at rest using a separate key from `AUTH_SECRET`.
-- **First provider.** Google Calendar via `googleapis`. Microsoft Graph, CalDAV, and a first-party noClu calendar are post-Phase-2 work.
-- **Registry pattern.** Providers register themselves in `src/lib/calendar/providers/index.ts` (analogous to noclulabs' animation registry). The booking core resolves a provider by discriminator and never branches on type.
 
 ## Calendar abstraction layer
 
@@ -285,28 +282,6 @@ we can rotate the encryption key without a schema change (a future `v2:`
 prefix will indicate ciphertext produced by the next key). Encryption
 helpers ship in Phase 2b; Phase 2a's schema accepts the columns as plain
 text with no crypto applied.
-
-## Deployment (planned, Phase 1)
-
-Same shape as noclulabs and portalNetwork:
-
-- Multi-stage `Dockerfile` (deps / build / migrator / runner stages on `node:20-alpine`).
-- `docker-compose.yml` maps host port `3002` to container port `3000` (portalNetwork holds 3000, noclulabs holds 3001, noCluCal claims 3002).
-- Caddy on the host terminates TLS for `cal.noclulabs.com` and proxies to `127.0.0.1:3002`.
-- GitHub Actions `ci.yml` runs lint + type-check + test + build on every push and PR.
-- GitHub Actions `deploy.yml` SSHs into the droplet, pulls, runs migrations via the `migrate` Compose profile, and rebuilds the web container.
-
-Production paths on the droplet (planned):
-
-- Repo clone: `/opt/noclucal/`
-- Env file: `/opt/noclucal/.env`
-- Caddy block for `cal.noclulabs.com` added to the host Caddyfile.
-
-### Dockerfile stage ordering
-
-The Dockerfile defines four stages in this order: `deps` → `build` → `migrator` → `runner`. The order is load-bearing: `docker-compose.yml`'s `web` service does NOT specify a `target:` directive, so Docker builds the LAST stage by default. `runner` must remain last for `web` to build the Next.js runtime image. The `migrate` Compose service uses `target: migrator` explicitly, so it is unaffected by where `migrator` sits in the file as long as it exists.
-
-Phase 1c shipped with `migrator` as the last stage and production restart-looped on the migrator's CMD until this was caught and fixed.
 
 ## Known minor issues
 
