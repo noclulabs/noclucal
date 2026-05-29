@@ -283,6 +283,33 @@ prefix will indicate ciphertext produced by the next key). Encryption
 helpers ship in Phase 2b; Phase 2a's schema accepts the columns as plain
 text with no crypto applied.
 
+### Token encryption
+
+`src/lib/calendar/crypto.ts` provides `encryptToken(plaintext): string` and
+`decryptToken(ciphertext): string`. Algorithm: AES-256-GCM via Node's built-in
+`node:crypto`. No external dependencies.
+
+Ciphertext format is `v1:base64nonce:base64ciphertext`. The version prefix is
+load-bearing: a future `v2:` would indicate ciphertext produced by a different
+key, enabling key rotation without a schema change (the decrypt path dispatches
+on the version to find the right key). Each encryption uses a fresh random
+12-byte nonce, so the same plaintext encrypts to a different output every time.
+
+The key is sourced from `process.env.TOKEN_ENCRYPTION_KEY` (base64-encoded 32
+bytes) and loaded lazily on first encrypt/decrypt call. Lazy loading is
+deliberate: Next.js's build-time module collection imports this file without
+the env var being set, and we do not want the build to crash. Misconfigured
+deployments surface a clear error on first use.
+
+Tests in `tests/lib/calendar/crypto.test.ts` set their own key in `beforeEach`
+and restore in `afterEach`, so test outcomes are independent of whatever is in
+`.env.local`.
+
+Decryption failures (tampering, wrong key, malformed format) all throw. Route
+code that catches a decryption error should treat the connection as broken,
+delete the row, and prompt the user to reconnect. The crypto module itself
+never logs key material or partial ciphertext.
+
 ## Known minor issues
 
 - **Caddy access log block removed during Phase 1a ops.** The `log {}` block for `cal.noclulabs.com` was stripped from `/etc/caddy/Caddyfile` because `/var/log/caddy/` is not writable by the Caddy user on the droplet. Re-enable by pre-creating the log file with `caddy:caddy` ownership before adding the `log {}` block back. Not blocking; access logs are nice-to-have.
