@@ -9,7 +9,7 @@
 - **Domain:** cal.noclulabs.com (subdomain of noclulabs.com for cookie-based SSO)
 - **Repository:** github.com/noclulabs/noclucal
 - **Hosting:** DigitalOcean Droplet (shared with noclulabs.com and portalNetwork; unique host port)
-- **Status:** Phase 3b complete. Phases 1 (SSO bridge, `/me` proof-of-life, `noclucal_users` lazy upsert) and 2 (Google Calendar provider, connect / disconnect, `/settings/calendars`, AES-256-GCM token encryption) are closed. Phase 3a shipped the storage shape for the booking core: `event_types`, `host_settings`, `availability_rules`, and `availability_overrides` tables plus the shared `EVENT_TYPE_COLORS` palette and migration 0002. Phase 3b ships the slot computation engine: the pure `computeSlots` function at `src/lib/scheduling/compute-slots.ts` plus numeric interval helpers and scheduling types. The engine is implemented and exhaustively tested but not yet wired to a consumer; the settings UI (3c) is its first consumer.
+- **Status:** Phase 3c complete. Phases 1 (SSO bridge, `/me` proof-of-life, `noclucal_users` lazy upsert) and 2 (Google Calendar provider, connect / disconnect, `/settings/calendars`, AES-256-GCM token encryption) are closed. Phase 3a shipped the storage shape for the booking core: `event_types`, `host_settings`, `availability_rules`, and `availability_overrides` tables plus the shared `EVENT_TYPE_COLORS` palette and migration 0002. Phase 3b shipped the slot computation engine: the pure `computeSlots` function at `src/lib/scheduling/compute-slots.ts` plus numeric interval helpers and scheduling types (implemented and exhaustively tested, not yet wired to a consumer). Phase 3c ships event types management: signed-in users can create, edit, and delete event types at `/settings/event-types`, backed by the Zod validation module, the user-scoped data-access layer, and the create/update/delete server actions. Availability and timezone management is 3d; a live slot preview (the first `computeSlots` runtime consumer) is a later optional sub-phase.
 
 ## Bible files (canonical set)
 
@@ -91,6 +91,8 @@ noclucal/
       meta/
         _journal.json
         0000_snapshot.json
+        0001_snapshot.json
+        0002_snapshot.json
       0000_even_the_twelve.sql
       0001_equal_guardsmen.sql
       0002_boring_nighthawk.sql
@@ -105,14 +107,41 @@ noclucal/
         auth/
           [...nextauth]/
             route.ts
+        calendar/
+          google/
+            callback/
+              route.ts
+            connect/
+              route.ts
       me/
         page.tsx
+      settings/
+        calendars/
+          actions.ts
+          page.tsx
+        event-types/
+          [id]/
+            page.tsx
+          new/
+            page.tsx
+          actions.ts
+          event-type-form.tsx
+          page.tsx
       globals.css
       layout.tsx
       page.tsx
     lib/
       auth/
         upsert-noclucal-user.ts
+      calendar/
+        providers/
+          google.ts
+          index.ts
+          register-all.ts
+        connections.ts
+        crypto.ts
+        oauth-state.ts
+        types.ts
       db/
         schema/
           _types.ts
@@ -125,10 +154,13 @@ noclucal/
         index.ts
       event-types/
         colors.ts
+        queries.ts
+        validation.ts
       scheduling/
         compute-slots.ts
         intervals.ts
         types.ts
+      app-url.ts
       version.ts
     auth.config.ts
     auth.ts
@@ -137,6 +169,14 @@ noclucal/
     lib/
       auth/
         upsert-noclucal-user.test.ts
+      calendar/
+        providers/
+          google.test.ts
+          register-all.test.ts
+          registry.test.ts
+        connections.test.ts
+        crypto.test.ts
+        oauth-state.test.ts
       db/
         schema/
           availability.test.ts
@@ -145,9 +185,12 @@ noclucal/
           host-settings.test.ts
       event-types/
         colors.test.ts
+        queries.test.ts
+        validation.test.ts
       scheduling/
         compute-slots.test.ts
         intervals.test.ts
+      app-url.test.ts
     setup.ts
     smoke.test.ts
   .dockerignore
@@ -172,9 +215,11 @@ noclucal/
 
 Phase 1d added the Auth.js v5 RP-mode config split (`src/auth.config.ts`, `src/auth.ts`, `src/proxy.ts`), the NextAuth handlers route (`src/app/api/auth/[...nextauth]/route.ts`), the `noclucal_users` lazy upsert helper (`src/lib/auth/upsert-noclucal-user.ts`), and the `/me` proof-of-life page (`src/app/me/page.tsx`).
 
-Phase 3a added the booking-core storage shape: the shared color palette (`src/lib/event-types/colors.ts`), three schema files (`src/lib/db/schema/event-types.ts`, `src/lib/db/schema/host-settings.ts`, `src/lib/db/schema/availability.ts`), the additive migration `drizzle/migrations/0002_boring_nighthawk.sql`, and integration tests under `tests/lib/db/schema/` plus the palette unit test at `tests/lib/event-types/colors.test.ts`. The tree above omits the Phase 2 calendar provider and settings files; that is pre-existing documentation drift, not introduced here.
+Phase 3a added the booking-core storage shape: the shared color palette (`src/lib/event-types/colors.ts`), three schema files (`src/lib/db/schema/event-types.ts`, `src/lib/db/schema/host-settings.ts`, `src/lib/db/schema/availability.ts`), the additive migration `drizzle/migrations/0002_boring_nighthawk.sql`, and integration tests under `tests/lib/db/schema/` plus the palette unit test at `tests/lib/event-types/colors.test.ts`.
 
 Phase 3b added the slot computation engine: `src/lib/scheduling/compute-slots.ts` (the pure `computeSlots` function), `src/lib/scheduling/intervals.ts` (the `intervalsOverlap` and `mergeIntervals` helpers), `src/lib/scheduling/types.ts` (the input and output types), and the two test suites at `tests/lib/scheduling/`. It also added `luxon` and `@types/luxon` to the dependency set, the first use of Luxon in the codebase.
+
+Phase 3c added the event types vertical slice: the Zod validation module (`src/lib/event-types/validation.ts`) and the user-scoped data-access layer (`src/lib/event-types/queries.ts`), the `/settings/event-types` list, `new`, and `[id]` edit routes with the `EventTypeForm` client component and create/update/delete server actions (all under `src/app/settings/event-types/`), and the two test suites at `tests/lib/event-types/`. It added `zod` to the dependency set, the first use of Zod in the codebase. The tree above is now rebuilt to current reality, including the Phase 2 calendar library and `/settings/calendars` route that had previously drifted out of it.
 
 ## Deployment
 
@@ -609,6 +654,64 @@ A slot is kept if its start is at or after the effective start and strictly
 before the effective end (the clamp is on the slot start, not its end). If
 `rangeStart >= rangeEnd` or the effective window is empty, the result is the
 empty array.
+
+## Event type management
+
+Phase 3c ships the event types vertical slice: the Zod validation module at
+`src/lib/event-types/validation.ts`, the data-access layer at
+`src/lib/event-types/queries.ts`, the `/settings/event-types` list, `new`,
+and `[id]` edit routes, the `EventTypeForm` client component, and the
+create/update/delete server actions at
+`src/app/settings/event-types/actions.ts`. It is the first user-facing
+booking feature and the first use of Zod in the codebase. Availability and
+timezone management is 3d; a live slot preview is a later optional sub-phase.
+
+### Per-user authz scoping
+
+Authz is server-side and per-user. Every data-access function in
+`queries.ts` takes a `userId` and scopes every query to it: `getEventType`,
+`updateEventType`, and `deleteEventType` all filter on both `userId` and
+`id`, so a user can never read, update, or delete another user's event type
+by guessing its id (the read returns null, the update returns null, the
+delete returns false). The server actions resolve `userId` from `auth()` on
+the server and never trust a client-supplied id; the only client-supplied id
+is the event type's own `id` on the edit and delete forms, which is always
+re-scoped to the session user before it touches the database.
+
+### Slug rules and unique-violation mapping
+
+Slugs are lowercase kebab-case, validated by the `SLUG_PATTERN` regex and a
+small `RESERVED_SLUGS` list (`new`, `edit`, `api`) in the Zod schema.
+Uniqueness is per-user, enforced by the existing
+`event_types_user_slug_unique` index on `(user_id, slug)`. `createEventType`
+and `updateEventType` wrap the write in a try/catch and map the Postgres
+unique violation (SQLSTATE `23505`) to a `SlugConflictError`, which the
+actions catch and surface as a friendly field error on the slug input,
+never a 500. drizzle-orm wraps the failing query so the `23505` code lives
+on the error's `cause`; `isUniqueViolation` walks the cause chain to find
+it. The form also suggests a slug from the name via `slugify` until the user
+edits the slug field directly, but that is a client convenience; the schema
+validates whatever is finally submitted.
+
+### Server-side re-validation contract
+
+The form is a client component (for slug auto-suggest and swatch selection),
+but client validation is never the gate. Every server action re-parses the
+submitted `FormData` with the same `eventTypeInputSchema` via `safeParse`. On
+failure the action returns `{ errors, values }` (first Zod issue per field
+plus the stringified inputs so the form repopulates); on success it
+revalidates `/settings/event-types` and redirects to the list.
+
+### Checkbox-to-boolean handling
+
+The enabled toggle posts the literal string `"true"` or `"false"` through a
+controlled hidden input, and the action reads
+`formData.get("enabled") === "true"`. This is deliberate: a raw HTML checkbox
+posts nothing when unchecked, so `z.coerce.boolean` against a checkbox value
+would misread the disabled state. The color swatch picker posts the selected
+palette token (for example `indigo`) through a controlled hidden input,
+validated with `z.enum(EVENT_TYPE_COLORS)`; the swatches render from
+`EVENT_TYPE_COLOR_HEX`.
 
 ## Known minor issues
 
