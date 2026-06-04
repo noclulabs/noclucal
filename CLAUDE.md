@@ -9,7 +9,7 @@
 - **Domain:** cal.noclulabs.com (subdomain of noclulabs.com for cookie-based SSO)
 - **Repository:** github.com/noclulabs/noclucal
 - **Hosting:** DigitalOcean Droplet (shared with noclulabs.com and portalNetwork; unique host port)
-- **Status:** Phase 3e complete. Shipped so far: Phase 1 (SSO bridge, `/me`, `noclucal_users` lazy upsert), Phase 2 (Google Calendar provider, connect / disconnect, `/settings/calendars`, AES-256-GCM token encryption), Phase 3a (booking-core storage: `event_types`, `host_settings`, `availability_rules`, `availability_overrides`, the `EVENT_TYPE_COLORS` palette, migration 0002), 3b (the pure `computeSlots` engine, tested but not yet wired to a consumer), 3c (event types management at `/settings/event-types`), 3d (weekly availability and IANA timezone at `/settings/availability`), and 3e (date overrides as a third section on that page). This closes the required Phase 3 scope. Remaining in Phase 3: the optional live slot preview (3f, the first `computeSlots` runtime consumer). Phase 4 (public booking page plus Redis slot holds) is the next major phase. Per-phase detail lives in ROADMAP.md and CHANGELOG.md; deep design rationale for the booking core lives in `CALENDAR-PLAYBOOK.md`.
+- **Status:** Phase 3f complete. Shipped so far: Phase 1 (SSO bridge, `/me`, `noclucal_users` lazy upsert), Phase 2 (Google Calendar provider, connect / disconnect, `/settings/calendars`, AES-256-GCM token encryption), Phase 3a (booking-core storage: `event_types`, `host_settings`, `availability_rules`, `availability_overrides`, the `EVENT_TYPE_COLORS` palette, migration 0002), 3b (the pure `computeSlots` engine, tested but not yet wired to a consumer), 3c (event types management at `/settings/event-types`), 3d (weekly availability and IANA timezone at `/settings/availability`), 3e (date overrides as a third section on that page), and 3f (the settings app shell: sidebar navigation, the `/settings` overview home, sign-out, and a Bookings placeholder). This closes the required Phase 3 scope plus the navigation polish. Remaining in Phase 3: the optional live slot preview (3g, the first `computeSlots` runtime consumer). Phase 4 (public booking page plus Redis slot holds) is the next major phase. Per-phase detail lives in ROADMAP.md and CHANGELOG.md; deep design rationale for the booking core lives in `CALENDAR-PLAYBOOK.md`.
 
 ## Bible files (canonical set)
 
@@ -140,6 +140,8 @@ noclucal/
           overrides-editor.tsx
           page.tsx
           timezone-picker.tsx
+        bookings/
+          page.tsx
         calendars/
           actions.ts
           page.tsx
@@ -151,6 +153,10 @@ noclucal/
           actions.ts
           event-type-form.tsx
           page.tsx
+        actions.ts
+        layout.tsx
+        page.tsx
+        settings-nav.tsx
       globals.css
       layout.tsx
       page.tsx
@@ -531,6 +537,24 @@ rows the engine reads. The carry-forward rules, detailed in
 - **Independent saves, server-side authz.** Timezone, weekly schedule, and each
   override save independently; every action resolves `userId` from `auth()` and
   re-validates; client checks are friendlier feedback, never the gate.
+
+## Settings shell
+
+`src/app/settings/layout.tsx` wraps every `/settings` route in a sidebar plus a
+centered content frame (collapses to a stacked top bar on narrow viewports). The
+nav order is Overview, Event types, Availability, Calendars, Bookings.
+
+- **Active route** is computed in the `"use client"` `settings-nav.tsx` via
+  `usePathname`: Overview matches `/settings` exactly, every other item also
+  matches its nested routes.
+- **Overview (`/settings`)** reads existing queries only (connection, event type
+  count, availability rules, timezone); it adds no data-access. Pages render
+  bare section content into the frame, so they carry no full-page `<main>`.
+- **Single-placeholder policy:** an unbuilt feature gets one honest placeholder
+  behind a "soon" nav item (Bookings), never coming-soon stubs scattered around.
+- **Sign-out** (`actions.ts`) is relying-party: `signOut` clears the Auth.js
+  cookie scoped to `.noclulabs.com`, signing the user out suite-wide, then
+  redirects to noclulabs sign-in.
 
 ## Known minor issues
 
