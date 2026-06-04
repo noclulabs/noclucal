@@ -9,7 +9,7 @@
 - **Domain:** cal.noclulabs.com (subdomain of noclulabs.com for cookie-based SSO)
 - **Repository:** github.com/noclulabs/noclucal
 - **Hosting:** DigitalOcean Droplet (shared with noclulabs.com and portalNetwork; unique host port)
-- **Status:** Phase 1d complete. Auth.js v5 wired in SSO RP mode. The session cookie set by noclulabs on `.noclulabs.com` is now read here, verified with the shared `AUTH_SECRET`, and propagated via `auth()`. First protected route `/me` proves the SSO bridge end-to-end. `noclucal_users` shadow table receives a lazy upsert on each authenticated request. Phase 1 is closed; Phase 2 (Google Calendar provider) is the next architect prompt.
+- **Status:** Phase 3a complete. Phases 1 (SSO bridge, `/me` proof-of-life, `noclucal_users` lazy upsert) and 2 (Google Calendar provider, connect / disconnect, `/settings/calendars`, AES-256-GCM token encryption) are closed. Phase 3a ships the storage shape for the booking core: `event_types`, `host_settings`, `availability_rules`, and `availability_overrides` tables plus the shared `EVENT_TYPE_COLORS` palette and migration 0002. Storage only; slot-computation logic is Phase 3b and the settings UI is Phase 3c.
 
 ## Bible files (canonical set)
 
@@ -92,6 +92,8 @@ noclucal/
         _journal.json
         0000_snapshot.json
       0000_even_the_twelve.sql
+      0001_equal_guardsmen.sql
+      0002_boring_nighthawk.sql
   public/
     robots.txt
   scripts/
@@ -114,9 +116,15 @@ noclucal/
       db/
         schema/
           _types.ts
+          availability.ts
+          calendar-connections.ts
+          event-types.ts
+          host-settings.ts
           index.ts
           users.ts
         index.ts
+      event-types/
+        colors.ts
       version.ts
     auth.config.ts
     auth.ts
@@ -125,6 +133,14 @@ noclucal/
     lib/
       auth/
         upsert-noclucal-user.test.ts
+      db/
+        schema/
+          availability.test.ts
+          calendar-connections.test.ts
+          event-types.test.ts
+          host-settings.test.ts
+      event-types/
+        colors.test.ts
     setup.ts
     smoke.test.ts
   .dockerignore
@@ -148,6 +164,8 @@ noclucal/
 ```
 
 Phase 1d added the Auth.js v5 RP-mode config split (`src/auth.config.ts`, `src/auth.ts`, `src/proxy.ts`), the NextAuth handlers route (`src/app/api/auth/[...nextauth]/route.ts`), the `noclucal_users` lazy upsert helper (`src/lib/auth/upsert-noclucal-user.ts`), and the `/me` proof-of-life page (`src/app/me/page.tsx`).
+
+Phase 3a added the booking-core storage shape: the shared color palette (`src/lib/event-types/colors.ts`), three schema files (`src/lib/db/schema/event-types.ts`, `src/lib/db/schema/host-settings.ts`, `src/lib/db/schema/availability.ts`), the additive migration `drizzle/migrations/0002_boring_nighthawk.sql`, and integration tests under `tests/lib/db/schema/` plus the palette unit test at `tests/lib/event-types/colors.test.ts`. The tree above omits the Phase 2 calendar provider and settings files; that is pre-existing documentation drift, not introduced here.
 
 ## Deployment
 
@@ -226,6 +244,14 @@ Database wiring landed in Phase 1b; first schema and first migration landed in P
   No FK to anything; noclulabs is the source of truth and noCluCal never writes back. Rows are inserted lazily on first observation of each user via `src/lib/auth/upsert-noclucal-user.ts` (shipped in Phase 1d). When `username` or `display_name` change on the noclulabs side, the lazy upsert refreshes them via `ON CONFLICT (id) DO UPDATE`.
 
 - **`calendar_connections`** (Phase 2a). One row per OAuth-connected external calendar account. `user_id` FK to `noclucal_users.id` (cascade delete), `provider` discriminator, encrypted token ciphertext columns (`v1:base64nonce:base64ciphertext` format), `scopes text[]`, plus `connected_at` / `last_synced_at`. Unique index on `(user_id, provider)` enforces one account per provider for the MVP. See the calendar abstraction layer section for the full design.
+
+- **`event_types`** (Phase 3a). Per-user bookable event type definitions. `id` uuid PK (Postgres 18 native `uuidv7()`), `user_id` FK to `noclucal_users.id` (cascade delete), `name` / `slug` varchar(200), `description` text nullable, and all durations as integer minutes: `duration_minutes`, `buffer_before_minutes` / `buffer_after_minutes` (default 0), `min_notice_minutes` (default 0), `max_future_minutes` (default 86400, 60 days), `slot_granularity_minutes` (default 15). `color` is a varchar(32) named palette token (default `indigo`); `enabled` boolean (default true); `created_at` / `updated_at` timestamptz. Unique index `event_types_user_slug_unique` on `(user_id, slug)` makes the slug unique per host; a lookup index covers `(user_id)`. Integer minutes (not Postgres `interval`) keep slot math in one unit. Slug lowercasing, kebab-case enforcement, and reserved-word checks are app-layer concerns for Phase 3c. Color validity is enforced at the app layer against `EVENT_TYPE_COLORS`, not by a DB CHECK or pg enum, so the palette evolves without a migration.
+
+- **`host_settings`** (Phase 3a). noCluCal-owned per-user scheduling config. `user_id` uuid PK and FK to `noclucal_users.id` (cascade delete), `timezone` text (IANA, default `America/Los_Angeles`), `created_at` / `updated_at` timestamptz. This table exists so `noclucal_users` stays a pure projection of noclulabs identity: host-owned config like the booking timezone never lives on the shadow table. The PK on `user_id` is the only access path for the MVP. Timezone validation against Luxon's `IANAZone.isValidZone` is an app-layer concern for Phase 3c; 3a only sets a pragmatic column default.
+
+- **`availability_rules`** (Phase 3a). Recurring weekly availability windows, keyed on `user_id` directly (the MVP runs one schedule per host, shared by every event type, so there is no FK to `event_types` and no `schedule_id`). `id` uuid PK (`uuidv7()`), `user_id` FK cascade, `weekday` smallint (ISO 1 to 7, Monday=1, Sunday=7, to match Luxon's `DateTime.weekday`), `start_time` / `end_time` as Postgres `time` (wall-clock, no timezone), `created_at` / `updated_at`. Lookup indexes on `(user_id)` and `(user_id, weekday)`. Multiple rows per `(user_id, weekday)` are intentional so split days (for example 09:00 to 12:00 and 13:00 to 17:00) are first-class; there is deliberately no unique constraint on the pair. CHECK constraints `availability_rules_weekday_range` (weekday between 1 and 7) and `availability_rules_time_order` (start < end).
+
+- **`availability_overrides`** (Phase 3a). Date-specific exceptions to the recurring schedule. `id` uuid PK (`uuidv7()`), `user_id` FK cascade, `date` date, `is_available` boolean, `start_time` / `end_time` Postgres `time` (both nullable), `created_at` / `updated_at`. Lookup indexes on `(user_id)` and `(user_id, date)`. Multiple rows per `(user_id, date)` are allowed for split custom days, so there is no unique constraint on the pair. CHECK constraint `availability_overrides_shape` keeps the two modes mutually exclusive and well-formed: either a blocked day (`is_available = false` with null times) or a custom-hours day (`is_available = true` with non-null times and start < end). Times are interpreted in the host timezone from `host_settings`; UTC conversion is a Phase 3b slot-computation concern, never storage.
 
 ### Migrations
 
@@ -427,6 +453,72 @@ internal bind address (`http://0.0.0.0:3000`), not the public host.
 route uses this helper for the success redirect and all five error
 redirects. Future route handlers that build redirect URLs back into the
 app should use the same helper rather than `request.url`.
+
+## Event types and availability
+
+Phase 3a ships the storage shape for the booking core. No business logic,
+no UI, no input validation: those are Phase 3b (slot computation) and 3c
+(settings UI). The reasoning below is recorded so 3b and 3c inherit it.
+
+### Storage-only scope
+
+3a is tables, the schema barrel, the migration, and integration tests.
+There are no Zod validators, no server actions, no slot logic, and no
+pages in this phase. Anything that validates input (slug shape, reserved
+words, timezone validity, color membership) lands in 3c. Anything that
+computes bookable slots lands in 3b.
+
+### Per-user single availability schedule
+
+The MVP runs one availability schedule per host, shared by every event
+type. Availability rows key on `user_id` directly; there is no FK from
+availability to `event_types` and no `schedule_id` column. Multi-schedule
+is a future additive migration (add a `schedules` table, add a nullable
+`schedule_id` to the availability tables, backfill a default schedule).
+Do not retrofit a `schedule_id` until that work is scoped.
+
+### Normalized availability model
+
+`availability_rules` holds recurring weekly windows; `availability_overrides`
+holds date-specific exceptions. Both allow multiple rows per key
+(`(user_id, weekday)` and `(user_id, date)` respectively) so split days are
+first-class (for example 09:00 to 12:00 and 13:00 to 17:00 on one weekday,
+or a half-day custom override). There is deliberately no unique constraint
+on either pair. The override shape CHECK keeps the blocked and custom-hours
+modes mutually exclusive and well-formed.
+
+### ISO weekday and wall-clock time
+
+`weekday` is ISO 1 to 7 (Monday=1, Sunday=7) to match Luxon's
+`DateTime.weekday`, removing conversion friction in 3b. A CHECK constraint
+enforces the range. Times are Postgres `time` (wall-clock, no timezone) and
+are interpreted in the host's timezone, which resolves from `host_settings`.
+UTC conversion happens in 3b's slot computation, never in storage.
+
+### Integer minutes, not intervals
+
+Every duration (`duration_minutes`, the two buffers, `min_notice_minutes`,
+`max_future_minutes`, `slot_granularity_minutes`) is an integer count of
+minutes, not a Postgres `interval`. Slot math in 3b works in a single unit
+without parsing interval types.
+
+### Color as an app-validated token
+
+Event type `color` is a `varchar(32)` holding a named palette token (for
+example `indigo`), not a pg enum and with no DB CHECK. The single source of
+truth is `EVENT_TYPE_COLORS` in `src/lib/event-types/colors.ts`; the schema
+default and 3c's Zod validator both read from there. Storing the token as a
+plain varchar keeps the palette evolvable: adding a swatch is a code change
+with no migration. `EVENT_TYPE_COLOR_HEX` in the same module maps each token
+to a display hex tuned for the dark canvas; the swatch UI in 3c consumes it.
+
+### host_settings preserves the shadow-table invariant
+
+`noclucal_users` is a pure projection of noclulabs identity and must stay
+that way. Host-owned scheduling config (currently just the booking
+timezone) therefore lives on the noCluCal-owned `host_settings` table, keyed
+1:1 on `user_id`, rather than as columns on the shadow table. New host
+preferences added later belong here, not on `noclucal_users`.
 
 ## Known minor issues
 

@@ -15,6 +15,7 @@ Version targets and planned work for noCluCal.
 - Phase 2b (token encryption helpers): complete (2026-05-29). AES-256-GCM helpers at `src/lib/calendar/crypto.ts` with versioned `v1:base64nonce:base64ciphertext` ciphertext format, lazy key loading, and 14-case test coverage including tamper detection and cross-key rejection.
 - Phase 2c (Google Calendar provider implementation): complete (2026-05-29). `googleCalendarProvider` at `src/lib/calendar/providers/google.ts` implements every method on `CalendarProvider` over the `googleapis` SDK. `register-all.ts` wiring module ships. 42-case test suite stubs the SDK and verifies the call shape of every interface method.
 - Phase 2d (Google Calendar connect, disconnect, and settings page): complete (2026-06-03). OAuth connect and callback routes, disconnect server action, `/settings/calendars` page, refresh wrapper with 60s safety margin, cookie-based CSRF state, transactional connection upsert. Phase 2 MVP closed; users can connect a Google account, see it on the settings page, and disconnect it.
+- Phase 3a (event types and availability schema): complete (2026-06-04). Storage shape for the booking core: `event_types`, `host_settings`, `availability_rules`, and `availability_overrides` tables, the shared `EVENT_TYPE_COLORS` palette at `src/lib/event-types/colors.ts`, and the additive migration 0002. Integer-minute durations, ISO 1 to 7 weekday matching Luxon, split-day support, CHECK constraints, per-user single schedule. Storage only; slot computation is 3b and the settings UI is 3c.
 
 ---
 
@@ -118,11 +119,31 @@ busy-time reads. Webhook subscriptions are deferred (see "Deferred items").
 
 ## Phase 3: Event types and availability
 
-- [ ] `event_types` CRUD: name, slug, duration, buffer-before, buffer-after, min-notice, max-future, color.
-- [ ] `availability_rules`: weekday hours per timezone, date overrides (holidays, one-offs).
+Builds the booking core. Split into 3a (storage shape), 3b (slot
+computation logic), and 3c (settings UI), mirroring how Phase 2 was split
+into 2a through 2d.
+
+### Phase 3a: event types and availability schema (complete)
+
+- [x] `event_types` table at `src/lib/db/schema/event-types.ts`: name, slug, description, integer-minute durations (duration, buffer-before, buffer-after, min-notice, max-future, slot-granularity), color as a named palette token, enabled flag, timestamps. uuidv7 PK. Unique index on `(user_id, slug)`; lookup index on `(user_id)`.
+- [x] `host_settings` table at `src/lib/db/schema/host-settings.ts`: noCluCal-owned per-user config keyed on `user_id` PK, with an IANA `timezone` (default `America/Los_Angeles`). Keeps `noclucal_users` a pure projection of noclulabs identity.
+- [x] `availability_rules` and `availability_overrides` tables at `src/lib/db/schema/availability.ts`: normalized recurring weekly windows and date-specific exceptions, keyed on `user_id` (one schedule per host for the MVP). ISO 1 to 7 weekday matching Luxon. Multiple rows per key support split days. CHECK constraints enforce the weekday range, start < end ordering, and the available/blocked override shape.
+- [x] Shared `EVENT_TYPE_COLORS` palette at `src/lib/event-types/colors.ts`. Color validity is enforced at the app layer (3c), not by a DB CHECK or pg enum, so the palette evolves without a migration.
+- [x] Migration `drizzle/migrations/0002_boring_nighthawk.sql`. Purely additive (CREATE TABLE plus indexes and checks); no extensions; standard migrate-then-rebuild deploy order.
+- [x] Schema barrel re-exports the four new tables so `db.query.*` resolves with full type inference.
+- [x] Integration tests for the new tables (round-trips, defaults, unique and CHECK constraint enforcement, split-day inserts, cascade deletes) plus a palette unit test.
+
+### Phase 3b: slot computation (planned)
+
 - [ ] Slot computation: given event type + connected calendars + availability rules + invitee timezone, return a list of bookable slots. Pure function, exhaustively unit-tested with timezone edge cases (DST forward, DST backward, IDL crossings).
+- [ ] Zod input validators for event types (slug shape, reserved words, color membership) and host settings (IANA timezone validity against Luxon).
+- [ ] Server actions / query helpers for event type and availability CRUD over the 3a tables.
+
+### Phase 3c: settings UI (planned)
+
 - [ ] `/settings/event-types` page for managing event types.
-- [ ] `/settings/availability` page for managing availability rules.
+- [ ] `/settings/availability` page for managing availability rules and overrides.
+- [ ] Color swatch picker consuming `EVENT_TYPE_COLOR_HEX`; timezone picker validated against Luxon.
 
 ## Phase 4: Public booking page
 
