@@ -17,7 +17,8 @@ Version targets and planned work for noCluCal.
 - Phase 2d (Google Calendar connect, disconnect, and settings page): complete (2026-06-03). OAuth connect and callback routes, disconnect server action, `/settings/calendars` page, refresh wrapper with 60s safety margin, cookie-based CSRF state, transactional connection upsert. Phase 2 MVP closed; users can connect a Google account, see it on the settings page, and disconnect it.
 - Phase 3a (event types and availability schema): complete (2026-06-04). Storage shape for the booking core: `event_types`, `host_settings`, `availability_rules`, and `availability_overrides` tables, the shared `EVENT_TYPE_COLORS` palette at `src/lib/event-types/colors.ts`, and the additive migration 0002. Integer-minute durations, ISO 1 to 7 weekday matching Luxon, split-day support, CHECK constraints, per-user single schedule. Storage only; slot computation is 3b and the settings UI is 3c.
 - Phase 3b (slot computation engine): complete (2026-06-04). The pure `computeSlots` function at `src/lib/scheduling/compute-slots.ts`, numeric interval helpers at `src/lib/scheduling/intervals.ts`, and scheduling types at `src/lib/scheduling/types.ts`. Deterministic and fully injected (reference clock, range, host timezone, availability, event type, and busy intervals are all arguments); replace-with-block-wins override composition; half-open buffer overlap; wall-clock stepping with a spring-forward gap detector and fall-back single offering; min-notice and max-future clamp on the slot start. First use of Luxon. Exhaustively unit-tested; not yet wired to a consumer (3c is the first). The Zod input validators and CRUD helpers originally filed under 3b moved to 3c, where input validation belongs.
-- Phase 3c (event types management): complete (2026-06-04). The first user-facing booking feature: signed-in users create, edit, and delete event types at `/settings/event-types`. Zod validation at `src/lib/event-types/validation.ts` (slug rules, reserved words, `slugify`, field bounds, notice-versus-future refine); user-scoped data-access at `src/lib/event-types/queries.ts` with `SlugConflictError` mapping the unique violation to a field error; the list, `new`, and `[id]` edit pages, the `EventTypeForm` client component, and the create/update/delete server actions, all styled to match `/settings/calendars`. First use of Zod. Validation unit tests and data-access integration tests, including cross-user scoping; action and component tests deferred per the Phase 2d precedent. The CLAUDE.md File Structure tree was rebuilt to current reality. Availability and timezone UI is 3d; a live slot preview is 3e.
+- Phase 3c (event types management): complete (2026-06-04). The first user-facing booking feature: signed-in users create, edit, and delete event types at `/settings/event-types`. Zod validation at `src/lib/event-types/validation.ts` (slug rules, reserved words, `slugify`, field bounds, notice-versus-future refine); user-scoped data-access at `src/lib/event-types/queries.ts` with `SlugConflictError` mapping the unique violation to a field error; the list, `new`, and `[id]` edit pages, the `EventTypeForm` client component, and the create/update/delete server actions, all styled to match `/settings/calendars`. First use of Zod. Validation unit tests and data-access integration tests, including cross-user scoping; action and component tests deferred per the Phase 2d precedent. The CLAUDE.md File Structure tree was rebuilt to current reality. Availability and timezone UI is 3d; date overrides are 3e; a live slot preview is 3f.
+- Phase 3d (weekly availability and timezone management): complete (2026-06-04). Signed-in users set a weekly recurring availability schedule and their booking timezone at `/settings/availability`. Zod validation at `src/lib/availability/validation.ts` (ISO 1 to 7 weekday, wall-clock `"HH:MM"` time ordering, Luxon-backed timezone validity); user-scoped data-access at `src/lib/availability/queries.ts` (transactional weekly-replace where an empty set clears the schedule, plus the host-timezone upsert); the `/settings/availability` page with the Calendly-style weekly editor (per-weekday ranges with add, remove, and copy-to-all-days), the timezone picker populated from `Intl.supportedValuesOf` and re-validated server-side with Luxon, and two independent save actions. The week saves at once as one JSON `schedule` field. Validation unit tests and data-access integration tests; action and component tests deferred per the Phase 2d precedent. Date overrides are 3e; a live slot preview is 3f.
 
 ---
 
@@ -122,9 +123,9 @@ busy-time reads. Webhook subscriptions are deferred (see "Deferred items").
 ## Phase 3: Event types and availability
 
 Builds the booking core. Split into 3a (storage shape), 3b (slot
-computation logic), 3c (event types management UI), 3d (availability and
-timezone UI), and 3e (optional live slot preview), mirroring how Phase 2 was
-split into 2a through 2d.
+computation logic), 3c (event types management UI), 3d (weekly availability
+and timezone UI), 3e (date overrides UI), and 3f (optional live slot
+preview), mirroring how Phase 2 was split into 2a through 2d.
 
 ### Phase 3a: event types and availability schema (complete)
 
@@ -148,14 +149,19 @@ split into 2a through 2d.
 - [x] Validation unit tests and data-access integration tests, including cross-user scoping and slug-conflict cases. Action and React component tests deferred per the Phase 2d precedent.
 - [x] CLAUDE.md File Structure tree rebuilt to current reality (including the drifted Phase 2 calendar and settings files); new `## Event type management` design section.
 
-### Phase 3d: availability and timezone management (planned)
+### Phase 3d: weekly availability and timezone management (complete)
 
-- [ ] Zod input validators for availability rules and overrides (ISO 1 to 7 weekday, wall-clock time ordering, override shape) and host settings (IANA timezone validity against Luxon's `IANAZone.isValidZone`). The availability and timezone equivalents of the event type validators delivered in 3c.
-- [ ] Server actions / query helpers for availability and host-settings CRUD over the 3a tables, scoped by `userId` like the event type queries.
-- [ ] `/settings/availability` page for managing recurring availability rules and date-specific overrides.
-- [ ] Host timezone picker validated against Luxon, persisting to `host_settings`.
+- [x] Zod input validators for weekly availability rules (ISO 1 to 7 weekday, wall-clock `"HH:MM"` time ordering via a 24-hour regex, end-after-start refine) and host settings (IANA timezone validity against Luxon's `IANAZone.isValidZone`) at `src/lib/availability/validation.ts`. The availability and timezone equivalents of the event type validators delivered in 3c.
+- [x] Data-access at `src/lib/availability/queries.ts`, scoped by `userId` like the event type queries: `listAvailabilityRulesForUser` (ordered by weekday then start), the transactional `replaceAvailabilityRulesForUser` (delete-then-insert; an empty set clears the schedule), `getHostSettings`, and `upsertHostTimezone` (insert with `onConflictDoUpdate` on the PK).
+- [x] `/settings/availability` page with the Calendly-style weekly editor (per-weekday ranges with add, remove, and copy-to-all-days, plus client-side end-after-start flagging), the timezone picker populated from `Intl.supportedValuesOf` and re-validated server-side with Luxon, and two independent save actions. The week saves at once as one JSON `schedule` field. Times are `"HH:MM"` end to end; the time column's seconds are truncated on read.
+- [x] Validation unit tests and data-access integration tests (replace-clears-previous, per-user isolation, weekday-then-start ordering, host-timezone upsert). Action and component tests deferred per the Phase 2d precedent.
 
-### Phase 3e: live slot preview (planned, optional)
+### Phase 3e: date overrides (planned)
+
+- [ ] Zod input validators and data-access for `availability_overrides` (blocked days and custom-hours days, the mutually-exclusive override shape from 3a), scoped by `userId` like the weekly rules.
+- [ ] Date-specific override management in the `/settings/availability` UI: block a date, or set custom hours that replace the weekly rules for that date, composing with the replace-with-block-wins model the 3b engine already implements.
+
+### Phase 3f: live slot preview (planned, optional)
 
 - [ ] Optional live slot preview that calls `computeSlots` for a chosen event type against the host's availability, the first runtime consumer of the Phase 3b engine. Reads Google freebusy for the host and renders a small upcoming-slots grid in the settings UI.
 
