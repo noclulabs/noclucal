@@ -20,7 +20,7 @@ Identity federates from noclulabs.com via a shared-cookie SSO bridge. One noClu 
 
 ## Status
 
-Phase 1d complete. Auth.js v5 in SSO RP mode is wired. cal.noclulabs.com reads the session cookie set by noclulabs.com, verifies the JWT with the shared `AUTH_SECRET`, and propagates the session. Visit `/me` while signed in to noclulabs to confirm the bridge works. Phase 1 is closed; Phase 2 (Google Calendar provider) is next.
+Phase 2 MVP complete. Users signed into noclulabs.com can connect a Google Calendar account at `cal.noclulabs.com/settings/calendars`, see the connected email, and disconnect at any time. Tokens are encrypted at rest in `calendar_connections` via AES-256-GCM. The booking flow (event types, availability rules, public booking pages) is Phase 3 work.
 
 ## Getting started
 

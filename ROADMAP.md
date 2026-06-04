@@ -14,6 +14,7 @@ Version targets and planned work for noCluCal.
 - Phase 2a (CalendarProvider interface and calendar_connections schema): complete (2026-05-29). Interface contract, provider registry stubs, calendar_connections schema with unique-per-provider constraint, and migration shipped. No Google code yet; that lands in Phase 2b.
 - Phase 2b (token encryption helpers): complete (2026-05-29). AES-256-GCM helpers at `src/lib/calendar/crypto.ts` with versioned `v1:base64nonce:base64ciphertext` ciphertext format, lazy key loading, and 14-case test coverage including tamper detection and cross-key rejection.
 - Phase 2c (Google Calendar provider implementation): complete (2026-05-29). `googleCalendarProvider` at `src/lib/calendar/providers/google.ts` implements every method on `CalendarProvider` over the `googleapis` SDK. `register-all.ts` wiring module ships. 42-case test suite stubs the SDK and verifies the call shape of every interface method.
+- Phase 2d (Google Calendar connect, disconnect, and settings page): complete (2026-06-03). OAuth connect and callback routes, disconnect server action, `/settings/calendars` page, refresh wrapper with 60s safety margin, cookie-based CSRF state, transactional connection upsert. Phase 2 MVP closed; users can connect a Google account, see it on the settings page, and disconnect it.
 
 ---
 
@@ -103,15 +104,17 @@ busy-time reads. Webhook subscriptions are deferred (see "Deferred items").
 - [x] OAuth scope list locked at four entries: `openid`, `email`, `calendar.events`, `calendar.readonly`. The `openid` + `email` pair is required for Google to return an id_token with the `sub` and `email` claims.
 - [x] id_token verification via `OAuth2.verifyIdToken` is mandatory in `exchangeCode`; `email_verified` is intentionally NOT enforced.
 
-### Phase 2d: OAuth routes, connect/disconnect actions, `/settings/calendars` page
+### Phase 2d: OAuth routes, connect/disconnect actions, `/settings/calendars` page (complete)
 
-- [ ] Google Cloud Console OAuth client provisioned (manual ops; documented in the PR body or in `docs/ops/google-oauth.md` if it warrants permanence). Authorized redirect URIs: `https://cal.noclulabs.com/api/calendar/google/callback` and `http://localhost:3000/api/calendar/google/callback`. Client id and secret stored in Bitwarden and on the droplet `.env` as `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`.
-- [ ] `GET /api/calendar/google/connect` route: signed state, redirect to `buildAuthorizationUrl`.
-- [ ] `GET /api/calendar/google/callback` route: validate state, call `exchangeCode`, encrypt tokens via `encryptToken`, upsert `calendar_connections` row (DELETE-then-INSERT to honor the unique constraint cleanly), redirect to `/settings/calendars`.
-- [ ] `POST /api/calendar/google/disconnect` server action: load the row, call `provider.revoke`, DELETE the row.
-- [ ] `/settings/calendars` page lists the connected Google account (or "connect" CTA), shows the connected email, offers disconnect. `proxy.ts` matcher extended to protect `/settings/*`.
-- [ ] Refresh token handling: a thin wrapper that calls `refreshAccessToken` when `tokenExpiresAt` is within a 60s safety margin of now, re-encrypts via `encryptToken`, and persists the new token set. On refresh failure, DELETE the row and surface a "reconnect required" UI state.
-- [ ] `TOKEN_ENCRYPTION_KEY` must be on the droplet's `/opt/noclucal/.env` before this PR's deploy (the crypto helpers are first invoked at runtime here).
+- [x] Google Cloud Console OAuth client provisioned. Web application type. Authorized redirect URIs: `https://cal.noclulabs.com/api/calendar/google/callback` and `http://localhost:3000/api/calendar/google/callback`. Calendar API enabled. Client id and secret stored in Bitwarden under "noClu Infrastructure" and on the droplet `.env`.
+- [x] `GET /api/calendar/google/connect` route: cookie-based OAuth state, redirect to `buildAuthorizationUrl`. Auth-gated (redirects to noclulabs signin if no session).
+- [x] `GET /api/calendar/google/callback` route: validate cookie state, call `exchangeCode`, encrypt tokens via `encryptToken`, transactional DELETE-then-INSERT upsert into `calendar_connections`, redirect to `/settings/calendars`. Handles its own auth check (does not bounce to signin so the OAuth code is not lost).
+- [x] `disconnectGoogleCalendar` server action: load connection, best-effort `provider.revoke`, unconditional local delete, revalidate `/settings/calendars`.
+- [x] `/settings/calendars` server component: lists the connected Google account (or "connect" CTA), shows the connected email, offers disconnect via a server-action form. Renders error messages from the `?error=...` query string.
+- [x] `proxy.ts` matcher extended to protect `/settings/*` and `/api/calendar/google/connect`. Callback route is NOT in the matcher.
+- [x] Refresh token wrapper at `src/lib/calendar/connections.ts#getValidTokensForConnection`. 60-second safety margin. On refresh failure, deletes the connection row and throws `RefreshFailedError`.
+- [x] `TOKEN_ENCRYPTION_KEY` in the droplet `/opt/noclucal/.env`. The OAuth callback is the first runtime invoker of `encryptToken`.
+- [x] OAuth state via cookie (`__Host-noclucal-oauth-state` in prod, `noclucal-oauth-state` in dev). SameSite=lax. 10-minute max-age. Constant-time validation via `crypto.timingSafeEqual`.
 
 ## Phase 3: Event types and availability
 
