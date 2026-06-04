@@ -20,7 +20,7 @@ Identity federates from noclulabs.com via a shared-cookie SSO bridge. One noClu 
 
 ## Status
 
-Phase 3a complete. Users signed into noclulabs.com can connect a Google Calendar account at `cal.noclulabs.com/settings/calendars`, see the connected email, and disconnect at any time. Tokens are encrypted at rest in `calendar_connections` via AES-256-GCM. Storage for the booking core now exists too: event types, host settings, and availability rules and overrides have their tables and migration. There is no booking UI yet; slot computation is the next Phase 3 step and the public booking pages come in Phase 4.
+Phase 3c complete. Users signed into noclulabs.com can connect a Google Calendar account at `cal.noclulabs.com/settings/calendars`, see the connected email, and disconnect at any time. Tokens are encrypted at rest in `calendar_connections` via AES-256-GCM. Signed-in users can now also create, edit, and delete event types at `cal.noclulabs.com/settings/event-types`: name, slug, description, durations and buffers, booking window, color, and an enabled toggle, all validated server-side. The slot computation engine that turns event types and availability into bookable slots is implemented and tested. Availability and timezone management is the next Phase 3 step (3d), and the public booking pages come in Phase 4.
 
 ## Getting started
 

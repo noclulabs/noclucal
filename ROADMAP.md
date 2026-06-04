@@ -17,6 +17,7 @@ Version targets and planned work for noCluCal.
 - Phase 2d (Google Calendar connect, disconnect, and settings page): complete (2026-06-03). OAuth connect and callback routes, disconnect server action, `/settings/calendars` page, refresh wrapper with 60s safety margin, cookie-based CSRF state, transactional connection upsert. Phase 2 MVP closed; users can connect a Google account, see it on the settings page, and disconnect it.
 - Phase 3a (event types and availability schema): complete (2026-06-04). Storage shape for the booking core: `event_types`, `host_settings`, `availability_rules`, and `availability_overrides` tables, the shared `EVENT_TYPE_COLORS` palette at `src/lib/event-types/colors.ts`, and the additive migration 0002. Integer-minute durations, ISO 1 to 7 weekday matching Luxon, split-day support, CHECK constraints, per-user single schedule. Storage only; slot computation is 3b and the settings UI is 3c.
 - Phase 3b (slot computation engine): complete (2026-06-04). The pure `computeSlots` function at `src/lib/scheduling/compute-slots.ts`, numeric interval helpers at `src/lib/scheduling/intervals.ts`, and scheduling types at `src/lib/scheduling/types.ts`. Deterministic and fully injected (reference clock, range, host timezone, availability, event type, and busy intervals are all arguments); replace-with-block-wins override composition; half-open buffer overlap; wall-clock stepping with a spring-forward gap detector and fall-back single offering; min-notice and max-future clamp on the slot start. First use of Luxon. Exhaustively unit-tested; not yet wired to a consumer (3c is the first). The Zod input validators and CRUD helpers originally filed under 3b moved to 3c, where input validation belongs.
+- Phase 3c (event types management): complete (2026-06-04). The first user-facing booking feature: signed-in users create, edit, and delete event types at `/settings/event-types`. Zod validation at `src/lib/event-types/validation.ts` (slug rules, reserved words, `slugify`, field bounds, notice-versus-future refine); user-scoped data-access at `src/lib/event-types/queries.ts` with `SlugConflictError` mapping the unique violation to a field error; the list, `new`, and `[id]` edit pages, the `EventTypeForm` client component, and the create/update/delete server actions, all styled to match `/settings/calendars`. First use of Zod. Validation unit tests and data-access integration tests, including cross-user scoping; action and component tests deferred per the Phase 2d precedent. The CLAUDE.md File Structure tree was rebuilt to current reality. Availability and timezone UI is 3d; a live slot preview is 3e.
 
 ---
 
@@ -121,8 +122,9 @@ busy-time reads. Webhook subscriptions are deferred (see "Deferred items").
 ## Phase 3: Event types and availability
 
 Builds the booking core. Split into 3a (storage shape), 3b (slot
-computation logic), and 3c (settings UI), mirroring how Phase 2 was split
-into 2a through 2d.
+computation logic), 3c (event types management UI), 3d (availability and
+timezone UI), and 3e (optional live slot preview), mirroring how Phase 2 was
+split into 2a through 2d.
 
 ### Phase 3a: event types and availability schema (complete)
 
@@ -138,13 +140,24 @@ into 2a through 2d.
 
 - [x] Slot computation: `computeSlots` at `src/lib/scheduling/compute-slots.ts`. Given a reference clock, a requested range, the host timezone, availability rules and overrides, an event type config, and busy intervals, returns a list of bookable UTC slot instants. Pure and deterministic; busy times are injected, not fetched. Invitee timezone is deliberately not an input (slots are timezone-agnostic instants; rendering in the invitee's zone is a UI concern). Exhaustively unit-tested with timezone edge cases (DST spring forward, DST fall back, half-hour offset zone, UTC date-boundary attribution). Numeric interval helpers at `src/lib/scheduling/intervals.ts` and types at `src/lib/scheduling/types.ts` ship alongside. Not yet wired to a consumer; 3c is the first.
 
-### Phase 3c: settings UI (planned)
+### Phase 3c: event types management (complete)
 
-- [ ] Zod input validators for event types (slug shape, reserved words, color membership against `EVENT_TYPE_COLORS`) and host settings (IANA timezone validity against Luxon's `IANAZone.isValidZone`). Moved here from 3b: input validation belongs with the settings UI.
-- [ ] Server actions / query helpers for event type and availability CRUD over the 3a tables. Moved here from 3b.
-- [ ] `/settings/event-types` page for managing event types.
-- [ ] `/settings/availability` page for managing availability rules and overrides.
-- [ ] Color swatch picker consuming `EVENT_TYPE_COLOR_HEX`; timezone picker validated against Luxon.
+- [x] Zod input validators for event types at `src/lib/event-types/validation.ts` (slug shape via regex, reserved words, `slugify`, field bounds, color membership against `EVENT_TYPE_COLORS` via `z.enum`, the minimum-notice-versus-maximum-future refine). First use of Zod.
+- [x] Event type data-access at `src/lib/event-types/queries.ts`: `listEventTypesForUser`, `getEventType`, `createEventType`, `updateEventType`, `deleteEventType`, every function scoped by `userId`. `SlugConflictError` maps the Postgres unique violation (`23505`) to a friendly field error.
+- [x] `/settings/event-types` list, `/new` create, and `/[id]` edit pages, the `EventTypeForm` client component, and the create/update/delete server actions. Server-side re-validation in every action; checkbox posts `"true"`/`"false"` and is read explicitly; color swatch picker consumes `EVENT_TYPE_COLOR_HEX`. Styling matches `/settings/calendars`.
+- [x] Validation unit tests and data-access integration tests, including cross-user scoping and slug-conflict cases. Action and React component tests deferred per the Phase 2d precedent.
+- [x] CLAUDE.md File Structure tree rebuilt to current reality (including the drifted Phase 2 calendar and settings files); new `## Event type management` design section.
+
+### Phase 3d: availability and timezone management (planned)
+
+- [ ] Zod input validators for availability rules and overrides (ISO 1 to 7 weekday, wall-clock time ordering, override shape) and host settings (IANA timezone validity against Luxon's `IANAZone.isValidZone`). The availability and timezone equivalents of the event type validators delivered in 3c.
+- [ ] Server actions / query helpers for availability and host-settings CRUD over the 3a tables, scoped by `userId` like the event type queries.
+- [ ] `/settings/availability` page for managing recurring availability rules and date-specific overrides.
+- [ ] Host timezone picker validated against Luxon, persisting to `host_settings`.
+
+### Phase 3e: live slot preview (planned, optional)
+
+- [ ] Optional live slot preview that calls `computeSlots` for a chosen event type against the host's availability, the first runtime consumer of the Phase 3b engine. Reads Google freebusy for the host and renders a small upcoming-slots grid in the settings UI.
 
 ## Phase 4: Public booking page
 
