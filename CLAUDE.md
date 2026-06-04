@@ -9,7 +9,7 @@
 - **Domain:** cal.noclulabs.com (subdomain of noclulabs.com for cookie-based SSO)
 - **Repository:** github.com/noclulabs/noclucal
 - **Hosting:** DigitalOcean Droplet (shared with noclulabs.com and portalNetwork; unique host port)
-- **Status:** Phase 3d complete. Phases 1 (SSO bridge, `/me` proof-of-life, `noclucal_users` lazy upsert) and 2 (Google Calendar provider, connect / disconnect, `/settings/calendars`, AES-256-GCM token encryption) are closed. Phase 3a shipped the storage shape for the booking core: `event_types`, `host_settings`, `availability_rules`, and `availability_overrides` tables plus the shared `EVENT_TYPE_COLORS` palette and migration 0002. Phase 3b shipped the slot computation engine: the pure `computeSlots` function at `src/lib/scheduling/compute-slots.ts` plus numeric interval helpers and scheduling types (implemented and exhaustively tested, not yet wired to a consumer). Phase 3c shipped event types management: signed-in users can create, edit, and delete event types at `/settings/event-types`, backed by the Zod validation module, the user-scoped data-access layer, and the create/update/delete server actions. Phase 3d ships weekly availability and timezone management at `/settings/availability`: a Calendly-style weekly editor backed by a transactional weekly-replace, and an IANA timezone picker upserted into `host_settings`, both with Zod validation and user-scoped data-access. Date overrides are 3e; a live slot preview (the first `computeSlots` runtime consumer) is a later optional sub-phase.
+- **Status:** Phase 3e complete. Phases 1 (SSO bridge, `/me` proof-of-life, `noclucal_users` lazy upsert) and 2 (Google Calendar provider, connect / disconnect, `/settings/calendars`, AES-256-GCM token encryption) are closed. Phase 3a shipped the storage shape for the booking core: `event_types`, `host_settings`, `availability_rules`, and `availability_overrides` tables plus the shared `EVENT_TYPE_COLORS` palette and migration 0002. Phase 3b shipped the slot computation engine: the pure `computeSlots` function at `src/lib/scheduling/compute-slots.ts` plus numeric interval helpers and scheduling types (implemented and exhaustively tested, not yet wired to a consumer). Phase 3c shipped event types management: signed-in users can create, edit, and delete event types at `/settings/event-types`, backed by the Zod validation module, the user-scoped data-access layer, and the create/update/delete server actions. Phase 3d shipped weekly availability and timezone management at `/settings/availability`: a Calendly-style weekly editor backed by a transactional weekly-replace, and an IANA timezone picker upserted into `host_settings`, both with Zod validation and user-scoped data-access. Phase 3e ships date overrides as a third section on `/settings/availability`: a host can block a single date or give it custom hours that replace the weekly rules for that day, backed by the date-keyed `dateOverrideInputSchema`, a per-date transactional replace, and the `OverridesEditor` component. This closes the required Phase 3 scope (event types, weekly availability, timezone, and date overrides). What remains in Phase 3 is the optional live slot preview (3f, the first `computeSlots` runtime consumer); Phase 4 (the public booking page plus Redis slot holds) is the next major phase.
 
 ## Bible files (canonical set)
 
@@ -119,6 +119,7 @@ noclucal/
         availability/
           actions.ts
           availability-editor.tsx
+          overrides-editor.tsx
           page.tsx
           timezone-picker.tsx
         calendars/
@@ -233,6 +234,8 @@ Phase 3b added the slot computation engine: `src/lib/scheduling/compute-slots.ts
 Phase 3c added the event types vertical slice: the Zod validation module (`src/lib/event-types/validation.ts`) and the user-scoped data-access layer (`src/lib/event-types/queries.ts`), the `/settings/event-types` list, `new`, and `[id]` edit routes with the `EventTypeForm` client component and create/update/delete server actions (all under `src/app/settings/event-types/`), and the two test suites at `tests/lib/event-types/`. It added `zod` to the dependency set, the first use of Zod in the codebase. The tree above is now rebuilt to current reality, including the Phase 2 calendar library and `/settings/calendars` route that had previously drifted out of it.
 
 Phase 3d added the availability vertical slice: the Zod validation module (`src/lib/availability/validation.ts`) and the user-scoped data-access layer (`src/lib/availability/queries.ts`), the `/settings/availability` route with the `AvailabilityEditor` and `TimezonePicker` client components and the two save server actions (all under `src/app/settings/availability/`), and the two test suites at `tests/lib/availability/`. No new dependencies (it reuses `zod` and `luxon`).
+
+Phase 3e extended the availability vertical slice with date overrides: the `dateOverrideInputSchema` validator and the override data-access (`listAvailabilityOverridesForUser`, the transactional `setDateOverrideForUser`, and `deleteDateOverrideForUser`) added to the existing `validation.ts` and `queries.ts`, the two override server actions added to `actions.ts`, the new `overrides-editor.tsx` client component, the date overrides section added to `page.tsx`, and override cases added to the two existing test suites. No schema, migration, or dependency change (the `availability_overrides` table already exists from 3a).
 
 ## Deployment
 
@@ -737,8 +740,12 @@ Phase 3d ships the availability vertical slice: the Zod validation module at
 `src/lib/availability/queries.ts`, the `/settings/availability` page, the
 Calendly-style weekly editor and the timezone picker client components, and
 the two save server actions at `src/app/settings/availability/actions.ts`.
-Date overrides are 3e; a live slot preview is a later optional sub-phase.
-Nothing here imports `computeSlots`.
+Phase 3e adds date overrides to the same files (the override schema, the
+override data-access, the override actions, and a new `overrides-editor.tsx`)
+plus a third section on the page. A live slot preview is a later optional
+sub-phase. Nothing here imports `computeSlots`; the override composition logic
+already lives in `computeSlots` from 3b (replace-with-block-wins), and 3e only
+ships the data and UI to populate the `availability_overrides` table.
 
 ### Transactional weekly-replace save model
 
@@ -784,6 +791,49 @@ confirmation or an error. Authz is server-side and per-user; client-side
 checks (each range's end after its start, disabling save while a range is
 malformed) are friendlier feedback ahead of the server gate, never the gate
 itself.
+
+### Date-keyed override model (Phase 3e)
+
+An override is keyed by date, not by row. A date is either blocked (a holiday:
+one `availability_overrides` row, `is_available` false, null times) or has
+custom hours that replace the recurring rules for that day (one or more rows,
+`is_available` true, with times). The UI and `dateOverrideInputSchema` speak in
+terms of a date carrying a `blocked` flag and a `ranges` array; the data-access
+expands that input into the right rows. The page reads the flat rows back and
+groups them by date into a `{ date, blocked, ranges }` display shape (a date is
+blocked when it has an `is_available` false row, otherwise its ranges are the
+`is_available` true rows' times truncated to `"HH:MM"`).
+
+This composes with the replace-with-block-wins model `computeSlots` already
+implements from 3b: any override row for a date replaces the recurring rules
+for that date, and a block row makes the whole date unavailable. 3e does not
+import the engine; it only writes the rows the engine reads.
+
+### Block-versus-custom exclusivity drives the shape CHECK
+
+`dateOverrideInputSchema`'s final refine makes the two modes mutually
+exclusive: a blocked day requires an empty `ranges`, an available day requires
+at least one range (each with its end after its start). Because the input can
+only be a well-formed block or a well-formed set of custom ranges, the rows
+`setDateOverrideForUser` produces always satisfy the `availability_overrides`
+shape CHECK from 3a (a blocked row is `is_available` false with null times; a
+custom row is `is_available` true with non-null times and start < end). The
+date is gated by a `"YYYY-MM-DD"` regex plus a Luxon `DateTime.fromISO`
+validity refine, so an impossible date that still matches the shape (for
+example `2026-13-40`) is rejected before it reaches the database.
+
+### Per-date transactional replace
+
+`setDateOverrideForUser` is the per-date analogue of the weekly replace: inside
+one `db.transaction` it deletes the user's existing rows for that single date,
+then inserts the new row (blocked) or rows (one per range). Editing a date is
+just setting it again; there is no per-row diffing. `deleteDateOverrideForUser`
+removes every row for a date and returns a boolean. The override travels from
+the editor to `setDateOverrideAction` as one JSON string in the `override` form
+field (the same single-JSON-field pattern the weekly schedule uses), parsed and
+re-validated with `dateOverrideInputSchema` on the server; the delete action
+format-checks the date field. Every override query is scoped by `userId`, so
+one user can never read, replace, or delete another user's overrides.
 
 ## Known minor issues
 

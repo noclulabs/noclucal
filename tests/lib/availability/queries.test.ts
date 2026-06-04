@@ -2,6 +2,7 @@ import { afterAll, beforeEach, describe, expect, it } from "vitest";
 
 import { closeDb, db } from "@/lib/db";
 import {
+  availabilityOverrides,
   availabilityRules,
   hostSettings,
   noclucalUsers,
@@ -11,8 +12,14 @@ import {
   listAvailabilityRulesForUser,
   replaceAvailabilityRulesForUser,
   upsertHostTimezone,
+  listAvailabilityOverridesForUser,
+  setDateOverrideForUser,
+  deleteDateOverrideForUser,
 } from "@/lib/availability/queries";
-import type { AvailabilityRuleInput } from "@/lib/availability/validation";
+import type {
+  AvailabilityRuleInput,
+  DateOverrideInput,
+} from "@/lib/availability/validation";
 
 const USER_A = "01940000-0000-7000-8000-0000000000a1";
 const USER_B = "01940000-0000-7000-8000-0000000000b2";
@@ -35,8 +42,20 @@ const rule = (
   endTime: string,
 ): AvailabilityRuleInput => ({ weekday, startTime, endTime });
 
+const blockedOverride = (date: string): DateOverrideInput => ({
+  date,
+  blocked: true,
+  ranges: [],
+});
+
+const customOverride = (
+  date: string,
+  ranges: { startTime: string; endTime: string }[],
+): DateOverrideInput => ({ date, blocked: false, ranges });
+
 describe("availability queries", () => {
   beforeEach(async () => {
+    await db.delete(availabilityOverrides);
     await db.delete(availabilityRules);
     await db.delete(hostSettings);
     await db.delete(noclucalUsers);
@@ -44,6 +63,7 @@ describe("availability queries", () => {
   });
 
   afterAll(async () => {
+    await db.delete(availabilityOverrides);
     await db.delete(availabilityRules);
     await db.delete(hostSettings);
     await db.delete(noclucalUsers);
@@ -157,6 +177,144 @@ describe("availability queries", () => {
         "America/Los_Angeles",
       );
       expect((await getHostSettings(USER_B))?.timezone).toBe("Asia/Tokyo");
+    });
+  });
+
+  describe("setDateOverrideForUser", () => {
+    it("writes a single blocked row with null times", async () => {
+      await setDateOverrideForUser(USER_A, blockedOverride("2026-12-25"));
+
+      const list = await listAvailabilityOverridesForUser(USER_A);
+      expect(list).toHaveLength(1);
+      expect(list[0].date).toBe("2026-12-25");
+      expect(list[0].isAvailable).toBe(false);
+      expect(list[0].startTime).toBeNull();
+      expect(list[0].endTime).toBeNull();
+    });
+
+    it("writes one row per range for a custom-hours day", async () => {
+      await setDateOverrideForUser(
+        USER_A,
+        customOverride("2026-12-24", [
+          { startTime: "09:00", endTime: "12:00" },
+          { startTime: "13:00", endTime: "17:00" },
+        ]),
+      );
+
+      const list = await listAvailabilityOverridesForUser(USER_A);
+      expect(list).toHaveLength(2);
+      expect(
+        list.map((r) => [hm(r.startTime!), hm(r.endTime!), r.isAvailable]),
+      ).toEqual([
+        ["09:00", "12:00", true],
+        ["13:00", "17:00", true],
+      ]);
+    });
+
+    it("replaces the prior rows when the same date is set again", async () => {
+      await setDateOverrideForUser(
+        USER_A,
+        customOverride("2026-12-24", [{ startTime: "09:00", endTime: "12:00" }]),
+      );
+      await setDateOverrideForUser(
+        USER_A,
+        customOverride("2026-12-24", [
+          { startTime: "10:00", endTime: "11:00" },
+          { startTime: "14:00", endTime: "15:00" },
+        ]),
+      );
+
+      const list = await listAvailabilityOverridesForUser(USER_A);
+      expect(list).toHaveLength(2);
+      expect(list.map((r) => [hm(r.startTime!), hm(r.endTime!)])).toEqual([
+        ["10:00", "11:00"],
+        ["14:00", "15:00"],
+      ]);
+    });
+
+    it("replaces a custom day with a block on a second set", async () => {
+      await setDateOverrideForUser(
+        USER_A,
+        customOverride("2026-12-24", [{ startTime: "09:00", endTime: "17:00" }]),
+      );
+      await setDateOverrideForUser(USER_A, blockedOverride("2026-12-24"));
+
+      const list = await listAvailabilityOverridesForUser(USER_A);
+      expect(list).toHaveLength(1);
+      expect(list[0].isAvailable).toBe(false);
+      expect(list[0].startTime).toBeNull();
+    });
+
+    it("isolates overrides per user", async () => {
+      await setDateOverrideForUser(USER_A, blockedOverride("2026-12-25"));
+      await setDateOverrideForUser(
+        USER_B,
+        customOverride("2026-12-25", [{ startTime: "08:00", endTime: "10:00" }]),
+      );
+
+      // Re-setting A's same date must not touch B.
+      await setDateOverrideForUser(
+        USER_A,
+        customOverride("2026-12-25", [{ startTime: "11:00", endTime: "12:00" }]),
+      );
+
+      const listA = await listAvailabilityOverridesForUser(USER_A);
+      const listB = await listAvailabilityOverridesForUser(USER_B);
+      expect(listA).toHaveLength(1);
+      expect(hm(listA[0].startTime!)).toBe("11:00");
+      expect(listB).toHaveLength(1);
+      expect(hm(listB[0].startTime!)).toBe("08:00");
+    });
+  });
+
+  describe("deleteDateOverrideForUser", () => {
+    it("removes every row for the date, returning true then false", async () => {
+      await setDateOverrideForUser(
+        USER_A,
+        customOverride("2026-12-24", [
+          { startTime: "09:00", endTime: "12:00" },
+          { startTime: "13:00", endTime: "17:00" },
+        ]),
+      );
+
+      expect(await deleteDateOverrideForUser(USER_A, "2026-12-24")).toBe(true);
+      expect(await listAvailabilityOverridesForUser(USER_A)).toEqual([]);
+      expect(await deleteDateOverrideForUser(USER_A, "2026-12-24")).toBe(false);
+    });
+
+    it("does not delete another user's override on the same date", async () => {
+      await setDateOverrideForUser(USER_A, blockedOverride("2026-12-25"));
+      await setDateOverrideForUser(USER_B, blockedOverride("2026-12-25"));
+
+      expect(await deleteDateOverrideForUser(USER_A, "2026-12-25")).toBe(true);
+      expect(await listAvailabilityOverridesForUser(USER_B)).toHaveLength(1);
+    });
+  });
+
+  describe("listAvailabilityOverridesForUser", () => {
+    it("orders rows by date then start time", async () => {
+      await setDateOverrideForUser(
+        USER_A,
+        customOverride("2026-12-26", [{ startTime: "10:00", endTime: "11:00" }]),
+      );
+      await setDateOverrideForUser(
+        USER_A,
+        customOverride("2026-12-24", [
+          { startTime: "13:00", endTime: "14:00" },
+          { startTime: "09:00", endTime: "10:00" },
+        ]),
+      );
+
+      const list = await listAvailabilityOverridesForUser(USER_A);
+      expect(list.map((r) => [r.date, hm(r.startTime!)])).toEqual([
+        ["2026-12-24", "09:00"],
+        ["2026-12-24", "13:00"],
+        ["2026-12-26", "10:00"],
+      ]);
+    });
+
+    it("returns an empty array for a user with no overrides", async () => {
+      expect(await listAvailabilityOverridesForUser(USER_A)).toEqual([]);
     });
   });
 });
