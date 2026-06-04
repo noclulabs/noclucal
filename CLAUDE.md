@@ -359,6 +359,66 @@ at startup, before any code path that calls `getProvider`. Phase 2c ships the
 file but does not yet import it from production code; the dedicated test
 verifies the registration works.
 
+### Calendar connection flow
+
+The full OAuth connect / callback / disconnect flow is wired in
+`src/app/api/calendar/google/connect/route.ts`,
+`src/app/api/calendar/google/callback/route.ts`, and
+`src/app/settings/calendars/actions.ts` (the disconnect server action).
+The settings page at `src/app/settings/calendars/page.tsx` is a server
+component that reads the session, looks up the user's Google connection,
+and renders connect-or-disconnect UI accordingly.
+
+**CSRF protection via cookie-based state.** The connect route generates
+a 32-byte random `state`, sets it as a `__Host-noclucal-oauth-state`
+cookie (or `noclucal-oauth-state` in dev), and passes the same value as
+the OAuth `state` parameter. The callback route compares the query
+`state` to the cookie value with `crypto.timingSafeEqual`. Mismatch
+redirects to the settings page with `?error=state_mismatch`. SameSite
+is `lax` (not `strict`) so the cookie survives the cross-site top-level
+navigation from Google back to our domain.
+
+**Transactional connection upsert.** On successful callback, the
+`replaceConnection` helper in `src/lib/calendar/connections.ts` runs a
+DELETE then INSERT inside `db.transaction`. The unique-per-(user,
+provider) index would otherwise conflict on reconnect; the
+delete-then-insert pattern handles reconnect cleanly without resorting
+to ON CONFLICT logic that would need to update token columns.
+
+**Disconnect is best-effort revoke plus unconditional local delete.**
+The disconnect server action calls `provider.revoke(refreshToken)`. If
+revoke throws (token already revoked at Google, network error), the
+error is logged and the local connection row is still deleted, so the
+user sees a successful disconnect in our UI. The next OAuth flow will
+re-grant access cleanly.
+
+**Refresh wrapper with 60-second safety margin.**
+`getValidTokensForConnection(connectionId)` in
+`src/lib/calendar/connections.ts` returns valid decrypted tokens. If
+the stored access token is within 60 seconds of expiry (or already
+expired), it calls `provider.refreshAccessToken`, persists the new
+token set, and returns the fresh tokens. On refresh failure (Google
+rejects the refresh token, typically because the user revoked our
+access in their Google account settings), the connection row is
+deleted and a `RefreshFailedError` is thrown. Callers should catch
+this error and route the user to a reconnect-required UX.
+
+**Auth gates.** The `proxy.ts` matcher protects `/settings/*` and
+`/api/calendar/google/connect`. The callback route is NOT in the
+matcher; it handles its own auth check. Bouncing through noclulabs
+signin from the callback would lose the single-use OAuth `code`, so
+the callback redirects unauthenticated requests to
+`/settings/calendars?error=session_lost` instead.
+
+**Redirect URI is environment-gated.** In production
+(`AUTH_URL.startsWith("https://")`), the redirect URI is
+`https://cal.noclulabs.com/api/calendar/google/callback`. In dev, it is
+`http://localhost:3000/api/calendar/google/callback`. The same value
+must be passed to both `buildAuthorizationUrl` (connect route) and
+`exchangeCode` (callback route); Google rejects token exchange if the
+redirect URIs do not match. Both URIs are registered in Google Cloud
+Console at OAuth client provisioning time.
+
 ## Known minor issues
 
 - **Caddy access log block removed during Phase 1a ops.** The `log {}` block for `cal.noclulabs.com` was stripped from `/etc/caddy/Caddyfile` because `/var/log/caddy/` is not writable by the Caddy user on the droplet. Re-enable by pre-creating the log file with `caddy:caddy` ownership before adding the `log {}` block back. Not blocking; access logs are nice-to-have.
