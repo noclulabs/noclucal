@@ -9,7 +9,7 @@
 - **Domain:** cal.noclulabs.com (subdomain of noclulabs.com for cookie-based SSO)
 - **Repository:** github.com/noclulabs/noclucal
 - **Hosting:** DigitalOcean Droplet (shared with noclulabs.com and portalNetwork; unique host port)
-- **Status:** Phase 3a complete. Phases 1 (SSO bridge, `/me` proof-of-life, `noclucal_users` lazy upsert) and 2 (Google Calendar provider, connect / disconnect, `/settings/calendars`, AES-256-GCM token encryption) are closed. Phase 3a ships the storage shape for the booking core: `event_types`, `host_settings`, `availability_rules`, and `availability_overrides` tables plus the shared `EVENT_TYPE_COLORS` palette and migration 0002. Storage only; slot-computation logic is Phase 3b and the settings UI is Phase 3c.
+- **Status:** Phase 3b complete. Phases 1 (SSO bridge, `/me` proof-of-life, `noclucal_users` lazy upsert) and 2 (Google Calendar provider, connect / disconnect, `/settings/calendars`, AES-256-GCM token encryption) are closed. Phase 3a shipped the storage shape for the booking core: `event_types`, `host_settings`, `availability_rules`, and `availability_overrides` tables plus the shared `EVENT_TYPE_COLORS` palette and migration 0002. Phase 3b ships the slot computation engine: the pure `computeSlots` function at `src/lib/scheduling/compute-slots.ts` plus numeric interval helpers and scheduling types. The engine is implemented and exhaustively tested but not yet wired to a consumer; the settings UI (3c) is its first consumer.
 
 ## Bible files (canonical set)
 
@@ -125,6 +125,10 @@ noclucal/
         index.ts
       event-types/
         colors.ts
+      scheduling/
+        compute-slots.ts
+        intervals.ts
+        types.ts
       version.ts
     auth.config.ts
     auth.ts
@@ -141,6 +145,9 @@ noclucal/
           host-settings.test.ts
       event-types/
         colors.test.ts
+      scheduling/
+        compute-slots.test.ts
+        intervals.test.ts
     setup.ts
     smoke.test.ts
   .dockerignore
@@ -166,6 +173,8 @@ noclucal/
 Phase 1d added the Auth.js v5 RP-mode config split (`src/auth.config.ts`, `src/auth.ts`, `src/proxy.ts`), the NextAuth handlers route (`src/app/api/auth/[...nextauth]/route.ts`), the `noclucal_users` lazy upsert helper (`src/lib/auth/upsert-noclucal-user.ts`), and the `/me` proof-of-life page (`src/app/me/page.tsx`).
 
 Phase 3a added the booking-core storage shape: the shared color palette (`src/lib/event-types/colors.ts`), three schema files (`src/lib/db/schema/event-types.ts`, `src/lib/db/schema/host-settings.ts`, `src/lib/db/schema/availability.ts`), the additive migration `drizzle/migrations/0002_boring_nighthawk.sql`, and integration tests under `tests/lib/db/schema/` plus the palette unit test at `tests/lib/event-types/colors.test.ts`. The tree above omits the Phase 2 calendar provider and settings files; that is pre-existing documentation drift, not introduced here.
+
+Phase 3b added the slot computation engine: `src/lib/scheduling/compute-slots.ts` (the pure `computeSlots` function), `src/lib/scheduling/intervals.ts` (the `intervalsOverlap` and `mergeIntervals` helpers), `src/lib/scheduling/types.ts` (the input and output types), and the two test suites at `tests/lib/scheduling/`. It also added `luxon` and `@types/luxon` to the dependency set, the first use of Luxon in the codebase.
 
 ## Deployment
 
@@ -519,6 +528,87 @@ that way. Host-owned scheduling config (currently just the booking
 timezone) therefore lives on the noCluCal-owned `host_settings` table, keyed
 1:1 on `user_id`, rather than as columns on the shadow table. New host
 preferences added later belong here, not on `noclucal_users`.
+
+## Slot computation
+
+Phase 3b ships the algorithmic core of the booking tool: `computeSlots` at
+`src/lib/scheduling/compute-slots.ts`, plus the numeric interval helpers at
+`src/lib/scheduling/intervals.ts` and the scheduling types at
+`src/lib/scheduling/types.ts`. It is the first use of Luxon in the codebase.
+Like the Google provider in Phase 2c, the engine ships implemented and
+exhaustively tested but is not yet wired into a route or page; the settings
+UI (3c) is its first consumer.
+
+### Purity and injection
+
+`computeSlots` is pure and deterministic. Every input is an argument: the
+reference instant `now`, the requested `rangeStart` / `rangeEnd`, the host
+timezone, the availability rules and overrides, the event type config, and
+the busy intervals. There is no system clock read, no DB access, and no
+network. Busy times are injected (mirroring `CalendarProvider.getFreeBusy`'s
+`{ start, end }` shape) rather than fetched, which is what makes the DST and
+edge-case matrix fully testable offline. The orchestration that actually
+reads Google freebusy and persists holds is a later phase.
+
+### Invitee timezone is not an input
+
+Slots are timezone-agnostic UTC instants. The invitee's timezone only
+affects how slots are grouped and rendered, which is a UI concern (3c and
+Phase 4). This is a deliberate deviation from the rough signature sketched
+in the onboarding doc, which listed invitee timezone as a parameter. Keeping
+it out of the engine means one set of instants serves every viewer and the
+function has no presentation responsibility.
+
+### Replace-with-block-wins override composition
+
+If a date has any override row, the recurring weekly rules are ignored for
+that date (replace, not merge). If any override row for that date is a
+full-day block (`isAvailable` false), the whole date is unavailable
+regardless of the other rows (block wins). Otherwise the date's windows are
+the union of the `isAvailable` true override windows. This matches the
+storage model from 3a, where multiple override rows per date are allowed for
+split custom days and a block row carries null times.
+
+### Buffer overlap rule
+
+A slot is valid only if its guarded interval
+`[start - bufferBefore, end + bufferAfter]` (real time) overlaps no busy
+interval. Overlap is half-open: touching at a boundary is not an overlap, so
+a slot ending exactly when a busy block starts is still bookable. Buffers
+block against any busy interval, not just the target calendar's own events.
+
+### Wall-clock stepping, nominal fit, real-time end
+
+Slots step by granularity from each availability window's start in
+wall-clock minutes, and a candidate is kept only if it fits fully inside the
+window by nominal duration (`candidateStartMinutes + durationMinutes <=
+windowEndMinutes`). Wall-clock stepping keeps the slot grid aligned to local
+time across a DST transition. The slot end instant, by contrast, is real
+time: `start instant + durationMinutes` of real milliseconds, so a meeting
+spanning a DST transition is still its nominal number of real minutes. The
+two uses of duration (nominal minutes for the fit check, real time for the
+end instant) are intentional and distinct.
+
+### DST policy
+
+The load-bearing conversion is `wallClockToInstant`, which builds a Luxon
+`DateTime` from the local date and minute-of-day in the host zone and
+confirms the local fields round-trip. Spring-forward nonexistent wall-clock
+times (Luxon forward-shifts them, so the hour or minute no longer matches)
+return null and are dropped. Fall-back ambiguous times resolve to Luxon's
+default offset and, because each wall-clock minute is converted exactly once,
+are offered once rather than twice. Day iteration uses Luxon's
+`plus({ days: 1 })`, which is DST-aware (it lands on the next local midnight
+regardless of a 23 or 25 hour day).
+
+### min-notice and max-future clamp on the slot start
+
+The effective window is
+`[max(rangeStart, now + minNotice), min(rangeEnd, now + maxFutureMinutes)]`.
+A slot is kept if its start is at or after the effective start and strictly
+before the effective end (the clamp is on the slot start, not its end). If
+`rangeStart >= rangeEnd` or the effective window is empty, the result is the
+empty array.
 
 ## Known minor issues
 
