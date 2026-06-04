@@ -419,6 +419,15 @@ must be passed to both `buildAuthorizationUrl` (connect route) and
 redirect URIs do not match. Both URIs are registered in Google Cloud
 Console at OAuth client provisioning time.
 
+**Redirect URLs are derived from `AUTH_URL`, not `request.url`.** Inside
+the Docker container behind Caddy, `request.url` resolves to the
+internal bind address (`http://0.0.0.0:3000`), not the public host.
+`getAppOrigin()` in `src/lib/app-url.ts` returns the public origin (from
+`AUTH_URL`, trailing slashes stripped, localhost fallback). The callback
+route uses this helper for the success redirect and all five error
+redirects. Future route handlers that build redirect URLs back into the
+app should use the same helper rather than `request.url`.
+
 ## Known minor issues
 
 - **Caddy access log block removed during Phase 1a ops.** The `log {}` block for `cal.noclulabs.com` was stripped from `/etc/caddy/Caddyfile` because `/var/log/caddy/` is not writable by the Caddy user on the droplet. Re-enable by pre-creating the log file with `caddy:caddy` ownership before adding the `log {}` block back. Not blocking; access logs are nice-to-have.

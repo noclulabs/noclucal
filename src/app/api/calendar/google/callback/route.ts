@@ -8,6 +8,7 @@ import {
 } from "@/lib/calendar/oauth-state";
 import { encryptToken } from "@/lib/calendar/crypto";
 import { replaceConnection } from "@/lib/calendar/connections";
+import { getAppOrigin } from "@/lib/app-url";
 
 const REDIRECT_URI_PROD =
   "https://cal.noclulabs.com/api/calendar/google/callback";
@@ -19,8 +20,8 @@ function getRedirectUri(): string {
     : REDIRECT_URI_DEV;
 }
 
-function settingsUrlWithError(origin: string, code: string): string {
-  return `${origin}/settings/calendars?error=${encodeURIComponent(code)}`;
+function settingsUrlWithError(code: string): string {
+  return `${getAppOrigin()}/settings/calendars?error=${encodeURIComponent(code)}`;
 }
 
 export async function GET(request: NextRequest) {
@@ -28,23 +29,19 @@ export async function GET(request: NextRequest) {
 
   const session = await auth();
   if (!session?.user?.id) {
-    return NextResponse.redirect(
-      settingsUrlWithError(url.origin, "session_lost"),
-    );
+    return NextResponse.redirect(settingsUrlWithError("session_lost"));
   }
 
   const error = url.searchParams.get("error");
   if (error) {
     // User denied consent at Google, or Google returned an error.
-    return NextResponse.redirect(settingsUrlWithError(url.origin, error));
+    return NextResponse.redirect(settingsUrlWithError(error));
   }
 
   const code = url.searchParams.get("code");
   const stateFromQuery = url.searchParams.get("state");
   if (!code || !stateFromQuery) {
-    return NextResponse.redirect(
-      settingsUrlWithError(url.origin, "missing_params"),
-    );
+    return NextResponse.redirect(settingsUrlWithError("missing_params"));
   }
 
   const cookieName = getOAuthStateCookieName();
@@ -54,7 +51,7 @@ export async function GET(request: NextRequest) {
     !validateOAuthState(stateFromQuery, stateFromCookie)
   ) {
     const failure = NextResponse.redirect(
-      settingsUrlWithError(url.origin, "state_mismatch"),
+      settingsUrlWithError("state_mismatch"),
     );
     failure.cookies.delete(cookieName);
     return failure;
@@ -69,7 +66,7 @@ export async function GET(request: NextRequest) {
   } catch (err) {
     console.error("Google exchangeCode failed", err);
     const failure = NextResponse.redirect(
-      settingsUrlWithError(url.origin, "exchange_failed"),
+      settingsUrlWithError("exchange_failed"),
     );
     failure.cookies.delete(cookieName);
     return failure;
@@ -86,7 +83,7 @@ export async function GET(request: NextRequest) {
     scopes: result.scopes,
   });
 
-  const success = NextResponse.redirect(`${url.origin}/settings/calendars`);
+  const success = NextResponse.redirect(`${getAppOrigin()}/settings/calendars`);
   success.cookies.delete(cookieName);
   return success;
 }
