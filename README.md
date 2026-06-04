@@ -105,6 +105,8 @@ This project uses four bible files as the sole continuity mechanism across Claud
 | `README.md` | Setup instructions, project overview |
 | `ROADMAP.md` | Planned work, version targets, future ideas |
 
+A separate `CALENDAR-PLAYBOOK.md` is a read-on-demand reference layer, not a bible file. It holds the deep per-feature design rationale for the booking core (calendar internals, slot computation, event types, availability) so CLAUDE.md stays under its context budget. Reference files are split by durable domain, never by phase; the bible set stays at four.
+
 ## License
 
 Private. All rights reserved.
