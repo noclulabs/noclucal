@@ -60,42 +60,37 @@ export default async function AvailabilityPage() {
   const initialOverrides = [...overridesByDate.values()];
 
   return (
-    <main className="min-h-screen flex items-start justify-center px-6 py-16">
-      <div className="max-w-2xl w-full">
-        <p className="text-xs uppercase tracking-[0.2em] text-foreground-muted mb-6">
-          Settings
+    <>
+      <h1 className="text-3xl md:text-4xl font-medium mb-8 text-foreground">
+        Availability
+      </h1>
+
+      <section className="bg-surface rounded-[20px] p-6 mb-6">
+        <h2 className="text-lg font-medium text-foreground mb-4">Timezone</h2>
+        <TimezonePicker currentTimezone={timezone} />
+      </section>
+
+      <section className="bg-surface rounded-[20px] p-6">
+        <h2 className="text-lg font-medium text-foreground mb-1">
+          Weekly hours
+        </h2>
+        <p className="text-sm text-foreground-muted mb-5">
+          Set when you are available to be booked each week. A day with no
+          ranges is unavailable.
         </p>
-        <h1 className="text-3xl md:text-4xl font-medium mb-8 text-foreground">
-          Availability
-        </h1>
+        <AvailabilityEditor initialRules={initialRules} />
+      </section>
 
-        <section className="bg-surface rounded-[20px] p-6 mb-6">
-          <h2 className="text-lg font-medium text-foreground mb-4">Timezone</h2>
-          <TimezonePicker currentTimezone={timezone} />
-        </section>
-
-        <section className="bg-surface rounded-[20px] p-6">
-          <h2 className="text-lg font-medium text-foreground mb-1">
-            Weekly hours
-          </h2>
-          <p className="text-sm text-foreground-muted mb-5">
-            Set when you are available to be booked each week. A day with no
-            ranges is unavailable.
-          </p>
-          <AvailabilityEditor initialRules={initialRules} />
-        </section>
-
-        <section className="bg-surface rounded-[20px] p-6 mt-6">
-          <h2 className="text-lg font-medium text-foreground mb-1">
-            Date overrides
-          </h2>
-          <p className="text-sm text-foreground-muted mb-5">
-            Block a single date or give it custom hours that replace the weekly
-            schedule for that day.
-          </p>
-          <OverridesEditor initialOverrides={initialOverrides} />
-        </section>
-      </div>
-    </main>
+      <section className="bg-surface rounded-[20px] p-6 mt-6">
+        <h2 className="text-lg font-medium text-foreground mb-1">
+          Date overrides
+        </h2>
+        <p className="text-sm text-foreground-muted mb-5">
+          Block a single date or give it custom hours that replace the weekly
+          schedule for that day.
+        </p>
+        <OverridesEditor initialOverrides={initialOverrides} />
+      </section>
+    </>
   );
 }

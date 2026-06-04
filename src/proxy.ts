@@ -24,9 +24,16 @@ export default auth((req) => {
 
 // Add new protected paths to this matcher as phases land. Phase 1d shipped /me
 // (the SSO proof-of-life page). Phase 2d adds the settings surface and the
-// Google connect route. The Google callback route is intentionally NOT listed:
-// it handles its own auth check inline, because bouncing through noclulabs
-// signin from the callback would lose the single-use OAuth code.
+// Google connect route. Phase 3f adds the bare `/settings` overview alongside
+// `/settings/:path*` so the shell's home is protected, not just its subpaths.
+// The Google callback route is intentionally NOT listed: it handles its own
+// auth check inline, because bouncing through noclulabs signin from the
+// callback would lose the single-use OAuth code.
 export const config = {
-  matcher: ["/me", "/settings/:path*", "/api/calendar/google/connect"],
+  matcher: [
+    "/me",
+    "/settings",
+    "/settings/:path*",
+    "/api/calendar/google/connect",
+  ],
 };
