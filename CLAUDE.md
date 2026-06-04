@@ -9,7 +9,7 @@
 - **Domain:** cal.noclulabs.com (subdomain of noclulabs.com for cookie-based SSO)
 - **Repository:** github.com/noclulabs/noclucal
 - **Hosting:** DigitalOcean Droplet (shared with noclulabs.com and portalNetwork; unique host port)
-- **Status:** Phase 3c complete. Phases 1 (SSO bridge, `/me` proof-of-life, `noclucal_users` lazy upsert) and 2 (Google Calendar provider, connect / disconnect, `/settings/calendars`, AES-256-GCM token encryption) are closed. Phase 3a shipped the storage shape for the booking core: `event_types`, `host_settings`, `availability_rules`, and `availability_overrides` tables plus the shared `EVENT_TYPE_COLORS` palette and migration 0002. Phase 3b shipped the slot computation engine: the pure `computeSlots` function at `src/lib/scheduling/compute-slots.ts` plus numeric interval helpers and scheduling types (implemented and exhaustively tested, not yet wired to a consumer). Phase 3c ships event types management: signed-in users can create, edit, and delete event types at `/settings/event-types`, backed by the Zod validation module, the user-scoped data-access layer, and the create/update/delete server actions. Availability and timezone management is 3d; a live slot preview (the first `computeSlots` runtime consumer) is a later optional sub-phase.
+- **Status:** Phase 3d complete. Phases 1 (SSO bridge, `/me` proof-of-life, `noclucal_users` lazy upsert) and 2 (Google Calendar provider, connect / disconnect, `/settings/calendars`, AES-256-GCM token encryption) are closed. Phase 3a shipped the storage shape for the booking core: `event_types`, `host_settings`, `availability_rules`, and `availability_overrides` tables plus the shared `EVENT_TYPE_COLORS` palette and migration 0002. Phase 3b shipped the slot computation engine: the pure `computeSlots` function at `src/lib/scheduling/compute-slots.ts` plus numeric interval helpers and scheduling types (implemented and exhaustively tested, not yet wired to a consumer). Phase 3c shipped event types management: signed-in users can create, edit, and delete event types at `/settings/event-types`, backed by the Zod validation module, the user-scoped data-access layer, and the create/update/delete server actions. Phase 3d ships weekly availability and timezone management at `/settings/availability`: a Calendly-style weekly editor backed by a transactional weekly-replace, and an IANA timezone picker upserted into `host_settings`, both with Zod validation and user-scoped data-access. Date overrides are 3e; a live slot preview (the first `computeSlots` runtime consumer) is a later optional sub-phase.
 
 ## Bible files (canonical set)
 
@@ -116,6 +116,11 @@ noclucal/
       me/
         page.tsx
       settings/
+        availability/
+          actions.ts
+          availability-editor.tsx
+          page.tsx
+          timezone-picker.tsx
         calendars/
           actions.ts
           page.tsx
@@ -131,6 +136,9 @@ noclucal/
       layout.tsx
       page.tsx
     lib/
+      availability/
+        queries.ts
+        validation.ts
       auth/
         upsert-noclucal-user.ts
       calendar/
@@ -167,6 +175,9 @@ noclucal/
     proxy.ts
   tests/
     lib/
+      availability/
+        queries.test.ts
+        validation.test.ts
       auth/
         upsert-noclucal-user.test.ts
       calendar/
@@ -221,6 +232,8 @@ Phase 3b added the slot computation engine: `src/lib/scheduling/compute-slots.ts
 
 Phase 3c added the event types vertical slice: the Zod validation module (`src/lib/event-types/validation.ts`) and the user-scoped data-access layer (`src/lib/event-types/queries.ts`), the `/settings/event-types` list, `new`, and `[id]` edit routes with the `EventTypeForm` client component and create/update/delete server actions (all under `src/app/settings/event-types/`), and the two test suites at `tests/lib/event-types/`. It added `zod` to the dependency set, the first use of Zod in the codebase. The tree above is now rebuilt to current reality, including the Phase 2 calendar library and `/settings/calendars` route that had previously drifted out of it.
 
+Phase 3d added the availability vertical slice: the Zod validation module (`src/lib/availability/validation.ts`) and the user-scoped data-access layer (`src/lib/availability/queries.ts`), the `/settings/availability` route with the `AvailabilityEditor` and `TimezonePicker` client components and the two save server actions (all under `src/app/settings/availability/`), and the two test suites at `tests/lib/availability/`. No new dependencies (it reuses `zod` and `luxon`).
+
 ## Deployment
 
 - Live at https://cal.noclulabs.com with the placeholder homepage.
@@ -248,6 +261,10 @@ Phase 1c shipped with `migrator` as the last stage and production restart-looped
 - CSS custom properties defined in `globals.css` using the tokens from the brand style guide.
 - Tailwind classes use the project's custom theme tokens, not arbitrary values.
 - **Drizzle schema-glob hazard.** drizzle-kit picks up any `*.ts` file in `src/lib/db/schema/` regardless of git tracking. A scratch file or stray copy in that directory will get baked into the next generated migration. Always confirm the schema directory contains only intended files before running `pnpm db:generate`.
+
+### Dependencies
+
+- **Pinning.** Shared dependencies (for example `zod`, `next-auth`, `drizzle-orm`) match noclulabs' pin style for cross-suite consistency; noClu-specific dependencies (for example `luxon`, `googleapis`) pin exact. Either way the lockfile (`pnpm-lock.yaml`) is authoritative for reproducible installs.
 
 ### Writing Style
 
@@ -712,6 +729,61 @@ would misread the disabled state. The color swatch picker posts the selected
 palette token (for example `indigo`) through a controlled hidden input,
 validated with `z.enum(EVENT_TYPE_COLORS)`; the swatches render from
 `EVENT_TYPE_COLOR_HEX`.
+
+## Availability and timezone management
+
+Phase 3d ships the availability vertical slice: the Zod validation module at
+`src/lib/availability/validation.ts`, the data-access layer at
+`src/lib/availability/queries.ts`, the `/settings/availability` page, the
+Calendly-style weekly editor and the timezone picker client components, and
+the two save server actions at `src/app/settings/availability/actions.ts`.
+Date overrides are 3e; a live slot preview is a later optional sub-phase.
+Nothing here imports `computeSlots`.
+
+### Transactional weekly-replace save model
+
+The whole week saves at once. `replaceAvailabilityRulesForUser` deletes the
+user's existing `availability_rules` and inserts the submitted set inside one
+`db.transaction`, mirroring the Phase 2 `replaceConnection` pattern and
+avoiding per-row diffing. An empty submission (all days unavailable) is valid
+and clears all rules (the delete runs, the insert is skipped). The dynamic
+set of ranges travels from the editor to the action as a single JSON string
+in the `schedule` form field; the action `JSON.parse`s it then re-validates
+with `weeklyScheduleSchema`. Indexed form fields are deliberately not used for
+the variable number of ranges.
+
+### `"HH:MM"` end to end, seconds truncated on read
+
+Times are wall-clock `"HH:MM"` from the editor's native `input type="time"`
+fields all the way to validation, which checks the format with a 24-hour
+regex. The Postgres `time` column returns `"HH:MM:SS"`, so the page truncates
+to `"HH:MM"` (a `slice(0, 5)`) when seeding the editor. Because zero-padded
+24-hour `"HH:MM"` strings sort lexicographically in the same order as the
+times they denote, the end-after-start refine compares the two strings
+directly rather than parsing them.
+
+### Timezone source and server-side validation
+
+The timezone is one IANA value per user, stored in `host_settings` and
+upserted via `ON CONFLICT (user_id) DO UPDATE`. The picker is populated
+client-side from `Intl.supportedValuesOf("timeZone")` (with the current value
+guaranteed present even if the runtime list omits it), but that list is
+convenience only: the server re-validates the submitted value with Luxon's
+`IANAZone.isValidZone` in `saveTimezoneAction` and never trusts the client's
+list. When no `host_settings` row exists yet, the page defaults the picker to
+`America/Los_Angeles`, mirroring the column default.
+
+### Independent timezone and schedule saves
+
+Timezone and weekly schedule are two sections with two separate actions
+(`saveTimezoneAction` and `saveWeeklyScheduleAction`), so a user can change
+one without re-saving the other. Both actions resolve `userId` from `auth()`,
+re-validate with the same Zod schemas the client uses, and return a small
+`{ ok?, error? }` state for the `useActionState` form to render a saved
+confirmation or an error. Authz is server-side and per-user; client-side
+checks (each range's end after its start, disabling save while a range is
+malformed) are friendlier feedback ahead of the server gate, never the gate
+itself.
 
 ## Known minor issues
 
