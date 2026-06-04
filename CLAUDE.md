@@ -9,7 +9,7 @@
 - **Domain:** cal.noclulabs.com (subdomain of noclulabs.com for cookie-based SSO)
 - **Repository:** github.com/noclulabs/noclucal
 - **Hosting:** DigitalOcean Droplet (shared with noclulabs.com and portalNetwork; unique host port)
-- **Status:** Phase 3e complete. Phases 1 (SSO bridge, `/me` proof-of-life, `noclucal_users` lazy upsert) and 2 (Google Calendar provider, connect / disconnect, `/settings/calendars`, AES-256-GCM token encryption) are closed. Phase 3a shipped the storage shape for the booking core: `event_types`, `host_settings`, `availability_rules`, and `availability_overrides` tables plus the shared `EVENT_TYPE_COLORS` palette and migration 0002. Phase 3b shipped the slot computation engine: the pure `computeSlots` function at `src/lib/scheduling/compute-slots.ts` plus numeric interval helpers and scheduling types (implemented and exhaustively tested, not yet wired to a consumer). Phase 3c shipped event types management: signed-in users can create, edit, and delete event types at `/settings/event-types`, backed by the Zod validation module, the user-scoped data-access layer, and the create/update/delete server actions. Phase 3d shipped weekly availability and timezone management at `/settings/availability`: a Calendly-style weekly editor backed by a transactional weekly-replace, and an IANA timezone picker upserted into `host_settings`, both with Zod validation and user-scoped data-access. Phase 3e ships date overrides as a third section on `/settings/availability`: a host can block a single date or give it custom hours that replace the weekly rules for that day, backed by the date-keyed `dateOverrideInputSchema`, a per-date transactional replace, and the `OverridesEditor` component. This closes the required Phase 3 scope (event types, weekly availability, timezone, and date overrides). What remains in Phase 3 is the optional live slot preview (3f, the first `computeSlots` runtime consumer); Phase 4 (the public booking page plus Redis slot holds) is the next major phase.
+- **Status:** Phase 3e complete. Shipped so far: Phase 1 (SSO bridge, `/me`, `noclucal_users` lazy upsert), Phase 2 (Google Calendar provider, connect / disconnect, `/settings/calendars`, AES-256-GCM token encryption), Phase 3a (booking-core storage: `event_types`, `host_settings`, `availability_rules`, `availability_overrides`, the `EVENT_TYPE_COLORS` palette, migration 0002), 3b (the pure `computeSlots` engine, tested but not yet wired to a consumer), 3c (event types management at `/settings/event-types`), 3d (weekly availability and IANA timezone at `/settings/availability`), and 3e (date overrides as a third section on that page). This closes the required Phase 3 scope. Remaining in Phase 3: the optional live slot preview (3f, the first `computeSlots` runtime consumer). Phase 4 (public booking page plus Redis slot holds) is the next major phase. Per-phase detail lives in ROADMAP.md and CHANGELOG.md; deep design rationale for the booking core lives in `CALENDAR-PLAYBOOK.md`.
 
 ## Bible files (canonical set)
 
@@ -22,7 +22,25 @@ Four files are the continuity mechanism across architect sessions. Every archite
 | ROADMAP.md | Per-PR when phase status changes, when a future arc gets fleshed out, or when a deferred item is logged or resolved | Version targets, planned work, completed phase history, future arcs, deferred items, known minor issues |
 | README.md | When user-facing features change, when setup changes, when the public feature list needs updating | Public-facing setup, project structure, feature list, deployment notes |
 
-A fifth playbook file (e.g. `CALENDAR-PLAYBOOK.md`) may be added later if a content-style or workflow-style reference emerges, analogous to noclulabs' `ANIMATION-PLAYBOOK.md`. Not present at Phase 0.
+### Reference layer (not bible files)
+
+`CALENDAR-PLAYBOOK.md` is a read-on-demand reference, not a bible file. It holds
+the deep per-feature design rationale (calendar internals, slot computation,
+event types, availability) that does not need to be in the always-loaded
+CLAUDE.md. The rule that keeps CLAUDE.md bounded as the project grows:
+
+- **CLAUDE.md keeps current state, active conventions, and gotchas that will
+  bite the next session.** When a phase ships, its deep rationale is summarized
+  to a few lines here plus a pointer into the playbook.
+- **The playbook absorbs the rationale.** It is append-mostly and read on
+  demand, so its growth costs nothing per session and does not create sync
+  drift (nobody re-edits last quarter's rationale).
+- **Split reference files by durable domain, not by phase.** One playbook now
+  (`CALENDAR-PLAYBOOK.md`); add another (e.g. `AUTH-PLAYBOOK.md`) only when a
+  domain's rationale actually outgrows a lean summary. One-file-per-phase is the
+  path that causes drift, so do not take it.
+
+The bible set stays the four files above. Adding the playbook does not grow it.
 
 ### Ramp-up rule for every Claude Code prompt
 
@@ -225,17 +243,7 @@ noclucal/
   vitest.config.ts
 ```
 
-Phase 1d added the Auth.js v5 RP-mode config split (`src/auth.config.ts`, `src/auth.ts`, `src/proxy.ts`), the NextAuth handlers route (`src/app/api/auth/[...nextauth]/route.ts`), the `noclucal_users` lazy upsert helper (`src/lib/auth/upsert-noclucal-user.ts`), and the `/me` proof-of-life page (`src/app/me/page.tsx`).
-
-Phase 3a added the booking-core storage shape: the shared color palette (`src/lib/event-types/colors.ts`), three schema files (`src/lib/db/schema/event-types.ts`, `src/lib/db/schema/host-settings.ts`, `src/lib/db/schema/availability.ts`), the additive migration `drizzle/migrations/0002_boring_nighthawk.sql`, and integration tests under `tests/lib/db/schema/` plus the palette unit test at `tests/lib/event-types/colors.test.ts`.
-
-Phase 3b added the slot computation engine: `src/lib/scheduling/compute-slots.ts` (the pure `computeSlots` function), `src/lib/scheduling/intervals.ts` (the `intervalsOverlap` and `mergeIntervals` helpers), `src/lib/scheduling/types.ts` (the input and output types), and the two test suites at `tests/lib/scheduling/`. It also added `luxon` and `@types/luxon` to the dependency set, the first use of Luxon in the codebase.
-
-Phase 3c added the event types vertical slice: the Zod validation module (`src/lib/event-types/validation.ts`) and the user-scoped data-access layer (`src/lib/event-types/queries.ts`), the `/settings/event-types` list, `new`, and `[id]` edit routes with the `EventTypeForm` client component and create/update/delete server actions (all under `src/app/settings/event-types/`), and the two test suites at `tests/lib/event-types/`. It added `zod` to the dependency set, the first use of Zod in the codebase. The tree above is now rebuilt to current reality, including the Phase 2 calendar library and `/settings/calendars` route that had previously drifted out of it.
-
-Phase 3d added the availability vertical slice: the Zod validation module (`src/lib/availability/validation.ts`) and the user-scoped data-access layer (`src/lib/availability/queries.ts`), the `/settings/availability` route with the `AvailabilityEditor` and `TimezonePicker` client components and the two save server actions (all under `src/app/settings/availability/`), and the two test suites at `tests/lib/availability/`. No new dependencies (it reuses `zod` and `luxon`).
-
-Phase 3e extended the availability vertical slice with date overrides: the `dateOverrideInputSchema` validator and the override data-access (`listAvailabilityOverridesForUser`, the transactional `setDateOverrideForUser`, and `deleteDateOverrideForUser`) added to the existing `validation.ts` and `queries.ts`, the two override server actions added to `actions.ts`, the new `overrides-editor.tsx` client component, the date overrides section added to `page.tsx`, and override cases added to the two existing test suites. No schema, migration, or dependency change (the `availability_overrides` table already exists from 3a).
+The tree reflects current reality through Phase 3e. The per-phase record of which files each phase added (and which dependencies it introduced: `luxon` in 3b, `zod` in 3c) lives in CHANGELOG.md and ROADMAP.md, not here.
 
 ## Deployment
 
@@ -383,457 +391,146 @@ prefix will indicate ciphertext produced by the next key). Encryption
 helpers ship in Phase 2b; Phase 2a's schema accepts the columns as plain
 text with no crypto applied.
 
-### Token encryption
+### Token encryption (summary)
 
-`src/lib/calendar/crypto.ts` provides `encryptToken(plaintext): string` and
-`decryptToken(ciphertext): string`. Algorithm: AES-256-GCM via Node's built-in
-`node:crypto`. No external dependencies.
+`src/lib/calendar/crypto.ts` does AES-256-GCM via `node:crypto` (no external
+deps), with the `v1:base64nonce:base64ciphertext` format and a fresh 12-byte
+nonce per encryption. The key comes from `process.env.TOKEN_ENCRYPTION_KEY`
+(base64 32 bytes), loaded lazily so the build does not crash without it.
+Decryption failures all throw: route code should treat the connection as
+broken, delete the row, and prompt reconnect. Full rationale (version-prefix
+key rotation, test key handling, no-logging guarantee) in
+`CALENDAR-PLAYBOOK.md` § Token encryption.
 
-Ciphertext format is `v1:base64nonce:base64ciphertext`. The version prefix is
-load-bearing: a future `v2:` would indicate ciphertext produced by a different
-key, enabling key rotation without a schema change (the decrypt path dispatches
-on the version to find the right key). Each encryption uses a fresh random
-12-byte nonce, so the same plaintext encrypts to a different output every time.
+### Google Calendar provider (summary)
 
-The key is sourced from `process.env.TOKEN_ENCRYPTION_KEY` (base64-encoded 32
-bytes) and loaded lazily on first encrypt/decrypt call. Lazy loading is
-deliberate: Next.js's build-time module collection imports this file without
-the env var being set, and we do not want the build to crash. Misconfigured
-deployments surface a clear error on first use.
+`src/lib/calendar/providers/google.ts` exports `googleCalendarProvider` over
+the `googleapis` SDK. Stateless (tokens are method arguments), credentials
+loaded lazily, no import side effects. Four OAuth scopes (`openid`, `email`,
+`calendar.events`, `calendar.readonly`); `exchangeCode` verifies the id_token
+via `OAuth2.verifyIdToken` before trusting `sub` / `email`. `register-all.ts`
+wires it via `registerProvider`. Full rationale (scope reasoning,
+`access_type` / `prompt`, `email_verified` not enforced, refresh-token
+preservation, revoke, Meet conferencing) in `CALENDAR-PLAYBOOK.md` § Google
+Calendar provider.
 
-Tests in `tests/lib/calendar/crypto.test.ts` set their own key in `beforeEach`
-and restore in `afterEach`, so test outcomes are independent of whatever is in
-`.env.local`.
+### Calendar connection flow (operational rules)
 
-Decryption failures (tampering, wrong key, malformed format) all throw. Route
-code that catches a decryption error should treat the connection as broken,
-delete the row, and prompt the user to reconnect. The crypto module itself
-never logs key material or partial ciphertext.
+The OAuth connect / callback / disconnect flow lives in
+`src/app/api/calendar/google/{connect,callback}/route.ts` and
+`src/app/settings/calendars/actions.ts`; the settings page renders
+connect-or-disconnect from the session. The load-bearing rules:
 
-### Google Calendar provider
+- **Redirect URLs come from `getAppOrigin()` (`src/lib/app-url.ts`), never
+  `request.url`.** Behind Caddy, `request.url` is the internal bind address
+  (`http://0.0.0.0:3000`), not the public host. Any future route building a
+  redirect back into the app uses this helper.
+- **Redirect URI is environment-gated** (`https://cal.noclulabs.com/...` in
+  prod, `http://localhost:3000/...` in dev) and the same value must go to both
+  `buildAuthorizationUrl` and `exchangeCode`, or Google rejects the exchange.
+- **CSRF via cookie-based `state`**: 32-byte value in a `__Host-noclucal-oauth-state`
+  cookie (SameSite `lax`), compared with `crypto.timingSafeEqual`; mismatch
+  redirects `?error=state_mismatch`.
+- **`replaceConnection`** does DELETE-then-INSERT in `db.transaction` (clean
+  reconnect under the unique-per-(user, provider) index).
+- **Disconnect** is best-effort `provider.revoke` plus unconditional local
+  delete.
+- **`getValidTokensForConnection`** refreshes within a 60-second expiry margin;
+  on refresh failure it deletes the row and throws `RefreshFailedError`
+  (callers route to reconnect).
+- **Auth gate exception**: the callback is NOT in the `proxy.ts` matcher (it
+  would lose the single-use `code`); it self-checks and redirects
+  `?error=session_lost`.
 
-`src/lib/calendar/providers/google.ts` exports `googleCalendarProvider`, an
-implementation of `CalendarProvider` over the official `googleapis` SDK.
-Stateless: tokens are method arguments. Client credentials (`GOOGLE_CLIENT_ID`,
-`GOOGLE_CLIENT_SECRET`) are loaded lazily from `process.env`, matching the
-pattern in `crypto.ts`. Module import has no side effects.
-
-OAuth scope list (final, four entries): `openid`, `email`,
-`https://www.googleapis.com/auth/calendar.events`,
-`https://www.googleapis.com/auth/calendar.readonly`. The `openid` and `email`
-scopes are required for Google to return an `id_token` with the `sub` and
-`email` claims that populate `externalAccountId` and `externalAccountEmail`.
-
-The authorization URL passes `access_type: "offline"` so Google returns a
-refresh token, and `prompt: "consent"` so the consent screen always shows
-(otherwise Google omits the refresh token on re-auth, silently breaking the
-reconnect flow).
-
-`exchangeCode` verifies the id_token via `OAuth2.verifyIdToken` (signature,
-audience, issuer, expiry checked against Google's public keys) before
-extracting `sub` and `email`. Parsing without verification would let a MitM
-with a fake id_token spoof account identity, and we do not skip this even
-though TLS makes the attack unlikely.
-
-`email_verified` is intentionally NOT enforced. Most Google accounts are
-verified, but rejecting unverified emails would create unhelpful failures
-for otherwise-valid connections. The email is display-only in our system.
-
-`refreshAccessToken` preserves the caller's refresh token if Google does not
-rotate it (Google sometimes returns a new refresh_token on refresh, sometimes
-does not; the interface requires `refreshToken` always be populated).
-
-`revoke` targets the refresh token via `OAuth2.revokeToken`. Revoking the
-refresh token also invalidates all access tokens issued from it.
-
-`createEvent` opts into Google Meet via `withConference: true`. The request
-includes `conferenceData.createRequest` with a fresh UUID `requestId` and
-`conferenceSolutionKey.type: "hangoutsMeet"`, and the API call passes
-`conferenceDataVersion: 1`. Without `withConference`, no conferencing payload
-is sent.
-
-`src/lib/calendar/providers/register-all.ts` is a side-effecting wiring module
-that imports the Google provider and calls `registerProvider`. Server entry
-points (Phase 2d's OAuth callback route is the first) import this file once
-at startup, before any code path that calls `getProvider`. Phase 2c ships the
-file but does not yet import it from production code; the dedicated test
-verifies the registration works.
-
-### Calendar connection flow
-
-The full OAuth connect / callback / disconnect flow is wired in
-`src/app/api/calendar/google/connect/route.ts`,
-`src/app/api/calendar/google/callback/route.ts`, and
-`src/app/settings/calendars/actions.ts` (the disconnect server action).
-The settings page at `src/app/settings/calendars/page.tsx` is a server
-component that reads the session, looks up the user's Google connection,
-and renders connect-or-disconnect UI accordingly.
-
-**CSRF protection via cookie-based state.** The connect route generates
-a 32-byte random `state`, sets it as a `__Host-noclucal-oauth-state`
-cookie (or `noclucal-oauth-state` in dev), and passes the same value as
-the OAuth `state` parameter. The callback route compares the query
-`state` to the cookie value with `crypto.timingSafeEqual`. Mismatch
-redirects to the settings page with `?error=state_mismatch`. SameSite
-is `lax` (not `strict`) so the cookie survives the cross-site top-level
-navigation from Google back to our domain.
-
-**Transactional connection upsert.** On successful callback, the
-`replaceConnection` helper in `src/lib/calendar/connections.ts` runs a
-DELETE then INSERT inside `db.transaction`. The unique-per-(user,
-provider) index would otherwise conflict on reconnect; the
-delete-then-insert pattern handles reconnect cleanly without resorting
-to ON CONFLICT logic that would need to update token columns.
-
-**Disconnect is best-effort revoke plus unconditional local delete.**
-The disconnect server action calls `provider.revoke(refreshToken)`. If
-revoke throws (token already revoked at Google, network error), the
-error is logged and the local connection row is still deleted, so the
-user sees a successful disconnect in our UI. The next OAuth flow will
-re-grant access cleanly.
-
-**Refresh wrapper with 60-second safety margin.**
-`getValidTokensForConnection(connectionId)` in
-`src/lib/calendar/connections.ts` returns valid decrypted tokens. If
-the stored access token is within 60 seconds of expiry (or already
-expired), it calls `provider.refreshAccessToken`, persists the new
-token set, and returns the fresh tokens. On refresh failure (Google
-rejects the refresh token, typically because the user revoked our
-access in their Google account settings), the connection row is
-deleted and a `RefreshFailedError` is thrown. Callers should catch
-this error and route the user to a reconnect-required UX.
-
-**Auth gates.** The `proxy.ts` matcher protects `/settings/*` and
-`/api/calendar/google/connect`. The callback route is NOT in the
-matcher; it handles its own auth check. Bouncing through noclulabs
-signin from the callback would lose the single-use OAuth `code`, so
-the callback redirects unauthenticated requests to
-`/settings/calendars?error=session_lost` instead.
-
-**Redirect URI is environment-gated.** In production
-(`AUTH_URL.startsWith("https://")`), the redirect URI is
-`https://cal.noclulabs.com/api/calendar/google/callback`. In dev, it is
-`http://localhost:3000/api/calendar/google/callback`. The same value
-must be passed to both `buildAuthorizationUrl` (connect route) and
-`exchangeCode` (callback route); Google rejects token exchange if the
-redirect URIs do not match. Both URIs are registered in Google Cloud
-Console at OAuth client provisioning time.
-
-**Redirect URLs are derived from `AUTH_URL`, not `request.url`.** Inside
-the Docker container behind Caddy, `request.url` resolves to the
-internal bind address (`http://0.0.0.0:3000`), not the public host.
-`getAppOrigin()` in `src/lib/app-url.ts` returns the public origin (from
-`AUTH_URL`, trailing slashes stripped, localhost fallback). The callback
-route uses this helper for the success redirect and all five error
-redirects. Future route handlers that build redirect URLs back into the
-app should use the same helper rather than `request.url`.
+Full prose for each rule is in `CALENDAR-PLAYBOOK.md` § Calendar connection flow.
 
 ## Event types and availability
 
-Phase 3a ships the storage shape for the booking core. No business logic,
-no UI, no input validation: those are Phase 3b (slot computation) and 3c
-(settings UI). The reasoning below is recorded so 3b and 3c inherit it.
-
-### Storage-only scope
-
-3a is tables, the schema barrel, the migration, and integration tests.
-There are no Zod validators, no server actions, no slot logic, and no
-pages in this phase. Anything that validates input (slug shape, reserved
-words, timezone validity, color membership) lands in 3c. Anything that
-computes bookable slots lands in 3b.
-
-### Per-user single availability schedule
-
-The MVP runs one availability schedule per host, shared by every event
-type. Availability rows key on `user_id` directly; there is no FK from
-availability to `event_types` and no `schedule_id` column. Multi-schedule
-is a future additive migration (add a `schedules` table, add a nullable
-`schedule_id` to the availability tables, backfill a default schedule).
-Do not retrofit a `schedule_id` until that work is scoped.
-
-### Normalized availability model
-
-`availability_rules` holds recurring weekly windows; `availability_overrides`
-holds date-specific exceptions. Both allow multiple rows per key
-(`(user_id, weekday)` and `(user_id, date)` respectively) so split days are
-first-class (for example 09:00 to 12:00 and 13:00 to 17:00 on one weekday,
-or a half-day custom override). There is deliberately no unique constraint
-on either pair. The override shape CHECK keeps the blocked and custom-hours
-modes mutually exclusive and well-formed.
-
-### ISO weekday and wall-clock time
-
-`weekday` is ISO 1 to 7 (Monday=1, Sunday=7) to match Luxon's
-`DateTime.weekday`, removing conversion friction in 3b. A CHECK constraint
-enforces the range. Times are Postgres `time` (wall-clock, no timezone) and
-are interpreted in the host's timezone, which resolves from `host_settings`.
-UTC conversion happens in 3b's slot computation, never in storage.
-
-### Integer minutes, not intervals
-
-Every duration (`duration_minutes`, the two buffers, `min_notice_minutes`,
-`max_future_minutes`, `slot_granularity_minutes`) is an integer count of
-minutes, not a Postgres `interval`. Slot math in 3b works in a single unit
-without parsing interval types.
-
-### Color as an app-validated token
-
-Event type `color` is a `varchar(32)` holding a named palette token (for
-example `indigo`), not a pg enum and with no DB CHECK. The single source of
-truth is `EVENT_TYPE_COLORS` in `src/lib/event-types/colors.ts`; the schema
-default and 3c's Zod validator both read from there. Storing the token as a
-plain varchar keeps the palette evolvable: adding a swatch is a code change
-with no migration. `EVENT_TYPE_COLOR_HEX` in the same module maps each token
-to a display hex tuned for the dark canvas; the swatch UI in 3c consumes it.
-
-### host_settings preserves the shadow-table invariant
-
-`noclucal_users` is a pure projection of noclulabs identity and must stay
-that way. Host-owned scheduling config (currently just the booking
-timezone) therefore lives on the noCluCal-owned `host_settings` table, keyed
-1:1 on `user_id`, rather than as columns on the shadow table. New host
-preferences added later belong here, not on `noclucal_users`.
+The booking-core table definitions live in § Database / Schema above. The deep
+storage rationale from Phase 3a (storage-only scope, the per-user single
+schedule with no `schedule_id`, the normalized multiple-rows-per-key model, ISO
+weekday + wall-clock time, integer minutes over `interval`, color as an
+app-validated token, and `host_settings` preserving the shadow-table invariant)
+lives in `CALENDAR-PLAYBOOK.md` § Event types and availability storage. Two of
+those carry forward as active rules: do not retrofit a `schedule_id` until
+multi-schedule is scoped, and new host preferences belong on `host_settings`,
+never on the `noclucal_users` shadow table.
 
 ## Slot computation
 
-Phase 3b ships the algorithmic core of the booking tool: `computeSlots` at
-`src/lib/scheduling/compute-slots.ts`, plus the numeric interval helpers at
-`src/lib/scheduling/intervals.ts` and the scheduling types at
-`src/lib/scheduling/types.ts`. It is the first use of Luxon in the codebase.
-Like the Google provider in Phase 2c, the engine ships implemented and
-exhaustively tested but is not yet wired into a route or page; the settings
-UI (3c) is its first consumer.
+`computeSlots` at `src/lib/scheduling/compute-slots.ts` (with `intervals.ts` and
+`types.ts`) is the pure, deterministic slot engine. Every input is an argument
+(`now`, range, host timezone, rules, overrides, event config, injected busy
+intervals): no clock read, no DB, no network, so the DST matrix is testable
+offline. Slots are timezone-agnostic UTC instants (invitee timezone is a UI
+concern, not an input). Key rules, all detailed in `CALENDAR-PLAYBOOK.md` §
+Slot computation:
 
-### Purity and injection
-
-`computeSlots` is pure and deterministic. Every input is an argument: the
-reference instant `now`, the requested `rangeStart` / `rangeEnd`, the host
-timezone, the availability rules and overrides, the event type config, and
-the busy intervals. There is no system clock read, no DB access, and no
-network. Busy times are injected (mirroring `CalendarProvider.getFreeBusy`'s
-`{ start, end }` shape) rather than fetched, which is what makes the DST and
-edge-case matrix fully testable offline. The orchestration that actually
-reads Google freebusy and persists holds is a later phase.
-
-### Invitee timezone is not an input
-
-Slots are timezone-agnostic UTC instants. The invitee's timezone only
-affects how slots are grouped and rendered, which is a UI concern (3c and
-Phase 4). This is a deliberate deviation from the rough signature sketched
-in the onboarding doc, which listed invitee timezone as a parameter. Keeping
-it out of the engine means one set of instants serves every viewer and the
-function has no presentation responsibility.
-
-### Replace-with-block-wins override composition
-
-If a date has any override row, the recurring weekly rules are ignored for
-that date (replace, not merge). If any override row for that date is a
-full-day block (`isAvailable` false), the whole date is unavailable
-regardless of the other rows (block wins). Otherwise the date's windows are
-the union of the `isAvailable` true override windows. This matches the
-storage model from 3a, where multiple override rows per date are allowed for
-split custom days and a block row carries null times.
-
-### Buffer overlap rule
-
-A slot is valid only if its guarded interval
-`[start - bufferBefore, end + bufferAfter]` (real time) overlaps no busy
-interval. Overlap is half-open: touching at a boundary is not an overlap, so
-a slot ending exactly when a busy block starts is still bookable. Buffers
-block against any busy interval, not just the target calendar's own events.
-
-### Wall-clock stepping, nominal fit, real-time end
-
-Slots step by granularity from each availability window's start in
-wall-clock minutes, and a candidate is kept only if it fits fully inside the
-window by nominal duration (`candidateStartMinutes + durationMinutes <=
-windowEndMinutes`). Wall-clock stepping keeps the slot grid aligned to local
-time across a DST transition. The slot end instant, by contrast, is real
-time: `start instant + durationMinutes` of real milliseconds, so a meeting
-spanning a DST transition is still its nominal number of real minutes. The
-two uses of duration (nominal minutes for the fit check, real time for the
-end instant) are intentional and distinct.
-
-### DST policy
-
-The load-bearing conversion is `wallClockToInstant`, which builds a Luxon
-`DateTime` from the local date and minute-of-day in the host zone and
-confirms the local fields round-trip. Spring-forward nonexistent wall-clock
-times (Luxon forward-shifts them, so the hour or minute no longer matches)
-return null and are dropped. Fall-back ambiguous times resolve to Luxon's
-default offset and, because each wall-clock minute is converted exactly once,
-are offered once rather than twice. Day iteration uses Luxon's
-`plus({ days: 1 })`, which is DST-aware (it lands on the next local midnight
-regardless of a 23 or 25 hour day).
-
-### min-notice and max-future clamp on the slot start
-
-The effective window is
-`[max(rangeStart, now + minNotice), min(rangeEnd, now + maxFutureMinutes)]`.
-A slot is kept if its start is at or after the effective start and strictly
-before the effective end (the clamp is on the slot start, not its end). If
-`rangeStart >= rangeEnd` or the effective window is empty, the result is the
-empty array.
+- **Override composition is replace-with-block-wins**: any override row for a
+  date replaces that date's weekly rules; any block row makes the whole date
+  unavailable; otherwise windows are the union of available override rows.
+- **Buffer overlap is half-open**: a slot's guarded interval
+  `[start - bufferBefore, end + bufferAfter]` must overlap no busy interval;
+  touching at a boundary is not an overlap.
+- **Wall-clock stepping, nominal fit, real-time end**: candidates step in
+  wall-clock minutes and must fit the window by nominal duration, but the end
+  instant is real elapsed time (the two duration uses are distinct, and this is
+  what keeps a DST-spanning meeting its nominal length).
+- **DST via `wallClockToInstant`**: spring-forward nonexistent times are dropped
+  (round-trip check fails), fall-back ambiguous times are offered once.
+- **min-notice / max-future clamp the slot start**, not its end; an empty
+  effective window yields `[]`.
 
 ## Event type management
 
-Phase 3c ships the event types vertical slice: the Zod validation module at
-`src/lib/event-types/validation.ts`, the data-access layer at
-`src/lib/event-types/queries.ts`, the `/settings/event-types` list, `new`,
-and `[id]` edit routes, the `EventTypeForm` client component, and the
-create/update/delete server actions at
-`src/app/settings/event-types/actions.ts`. It is the first user-facing
-booking feature and the first use of Zod in the codebase. Availability and
-timezone management is 3d; a live slot preview is a later optional sub-phase.
+The event types vertical slice (Zod `validation.ts`, user-scoped `queries.ts`,
+the `/settings/event-types` routes, `EventTypeForm`, and the
+create/update/delete actions) follows the patterns used by every later settings
+feature. The carry-forward rules, detailed in `CALENDAR-PLAYBOOK.md` § Event
+type management:
 
-### Per-user authz scoping
-
-Authz is server-side and per-user. Every data-access function in
-`queries.ts` takes a `userId` and scopes every query to it: `getEventType`,
-`updateEventType`, and `deleteEventType` all filter on both `userId` and
-`id`, so a user can never read, update, or delete another user's event type
-by guessing its id (the read returns null, the update returns null, the
-delete returns false). The server actions resolve `userId` from `auth()` on
-the server and never trust a client-supplied id; the only client-supplied id
-is the event type's own `id` on the edit and delete forms, which is always
-re-scoped to the session user before it touches the database.
-
-### Slug rules and unique-violation mapping
-
-Slugs are lowercase kebab-case, validated by the `SLUG_PATTERN` regex and a
-small `RESERVED_SLUGS` list (`new`, `edit`, `api`) in the Zod schema.
-Uniqueness is per-user, enforced by the existing
-`event_types_user_slug_unique` index on `(user_id, slug)`. `createEventType`
-and `updateEventType` wrap the write in a try/catch and map the Postgres
-unique violation (SQLSTATE `23505`) to a `SlugConflictError`, which the
-actions catch and surface as a friendly field error on the slug input,
-never a 500. drizzle-orm wraps the failing query so the `23505` code lives
-on the error's `cause`; `isUniqueViolation` walks the cause chain to find
-it. The form also suggests a slug from the name via `slugify` until the user
-edits the slug field directly, but that is a client convenience; the schema
-validates whatever is finally submitted.
-
-### Server-side re-validation contract
-
-The form is a client component (for slug auto-suggest and swatch selection),
-but client validation is never the gate. Every server action re-parses the
-submitted `FormData` with the same `eventTypeInputSchema` via `safeParse`. On
-failure the action returns `{ errors, values }` (first Zod issue per field
-plus the stringified inputs so the form repopulates); on success it
-revalidates `/settings/event-types` and redirects to the list.
-
-### Checkbox-to-boolean handling
-
-The enabled toggle posts the literal string `"true"` or `"false"` through a
-controlled hidden input, and the action reads
-`formData.get("enabled") === "true"`. This is deliberate: a raw HTML checkbox
-posts nothing when unchecked, so `z.coerce.boolean` against a checkbox value
-would misread the disabled state. The color swatch picker posts the selected
-palette token (for example `indigo`) through a controlled hidden input,
-validated with `z.enum(EVENT_TYPE_COLORS)`; the swatches render from
-`EVENT_TYPE_COLOR_HEX`.
+- **Authz is server-side and per-user.** Every `queries.ts` function takes a
+  `userId` and filters on both `userId` and `id`; actions resolve `userId` from
+  `auth()` and never trust a client-supplied id beyond re-scoping it.
+- **Slugs** are lowercase kebab-case (`SLUG_PATTERN` + `RESERVED_SLUGS`), unique
+  per-user via `event_types_user_slug_unique`; the writes map Postgres `23505`
+  to a `SlugConflictError` (via `isUniqueViolation` walking the `cause` chain)
+  surfaced as a field error, never a 500.
+- **Server-side re-validation is the gate.** Actions re-parse `FormData` with
+  the same schema via `safeParse`; client validation is convenience only.
+- **Checkbox and swatch post through controlled hidden inputs** (literal
+  `"true"`/`"false"`, palette token validated with `z.enum(EVENT_TYPE_COLORS)`),
+  because a raw checkbox posts nothing when unchecked.
 
 ## Availability and timezone management
 
-Phase 3d ships the availability vertical slice: the Zod validation module at
-`src/lib/availability/validation.ts`, the data-access layer at
-`src/lib/availability/queries.ts`, the `/settings/availability` page, the
-Calendly-style weekly editor and the timezone picker client components, and
-the two save server actions at `src/app/settings/availability/actions.ts`.
-Phase 3e adds date overrides to the same files (the override schema, the
-override data-access, the override actions, and a new `overrides-editor.tsx`)
-plus a third section on the page. A live slot preview is a later optional
-sub-phase. Nothing here imports `computeSlots`; the override composition logic
-already lives in `computeSlots` from 3b (replace-with-block-wins), and 3e only
-ships the data and UI to populate the `availability_overrides` table.
+The availability vertical slice (`validation.ts`, `queries.ts`, the
+`/settings/availability` page, the weekly editor, timezone picker, and overrides
+editor, plus the save actions) spans Phase 3d (weekly schedule + timezone) and
+3e (date overrides). Nothing here imports `computeSlots`; it only writes the
+rows the engine reads. The carry-forward rules, detailed in
+`CALENDAR-PLAYBOOK.md` § Availability and timezone management:
 
-### Transactional weekly-replace save model
-
-The whole week saves at once. `replaceAvailabilityRulesForUser` deletes the
-user's existing `availability_rules` and inserts the submitted set inside one
-`db.transaction`, mirroring the Phase 2 `replaceConnection` pattern and
-avoiding per-row diffing. An empty submission (all days unavailable) is valid
-and clears all rules (the delete runs, the insert is skipped). The dynamic
-set of ranges travels from the editor to the action as a single JSON string
-in the `schedule` form field; the action `JSON.parse`s it then re-validates
-with `weeklyScheduleSchema`. Indexed form fields are deliberately not used for
-the variable number of ranges.
-
-### `"HH:MM"` end to end, seconds truncated on read
-
-Times are wall-clock `"HH:MM"` from the editor's native `input type="time"`
-fields all the way to validation, which checks the format with a 24-hour
-regex. The Postgres `time` column returns `"HH:MM:SS"`, so the page truncates
-to `"HH:MM"` (a `slice(0, 5)`) when seeding the editor. Because zero-padded
-24-hour `"HH:MM"` strings sort lexicographically in the same order as the
-times they denote, the end-after-start refine compares the two strings
-directly rather than parsing them.
-
-### Timezone source and server-side validation
-
-The timezone is one IANA value per user, stored in `host_settings` and
-upserted via `ON CONFLICT (user_id) DO UPDATE`. The picker is populated
-client-side from `Intl.supportedValuesOf("timeZone")` (with the current value
-guaranteed present even if the runtime list omits it), but that list is
-convenience only: the server re-validates the submitted value with Luxon's
-`IANAZone.isValidZone` in `saveTimezoneAction` and never trusts the client's
-list. When no `host_settings` row exists yet, the page defaults the picker to
-`America/Los_Angeles`, mirroring the column default.
-
-### Independent timezone and schedule saves
-
-Timezone and weekly schedule are two sections with two separate actions
-(`saveTimezoneAction` and `saveWeeklyScheduleAction`), so a user can change
-one without re-saving the other. Both actions resolve `userId` from `auth()`,
-re-validate with the same Zod schemas the client uses, and return a small
-`{ ok?, error? }` state for the `useActionState` form to render a saved
-confirmation or an error. Authz is server-side and per-user; client-side
-checks (each range's end after its start, disabling save while a range is
-malformed) are friendlier feedback ahead of the server gate, never the gate
-itself.
-
-### Date-keyed override model (Phase 3e)
-
-An override is keyed by date, not by row. A date is either blocked (a holiday:
-one `availability_overrides` row, `is_available` false, null times) or has
-custom hours that replace the recurring rules for that day (one or more rows,
-`is_available` true, with times). The UI and `dateOverrideInputSchema` speak in
-terms of a date carrying a `blocked` flag and a `ranges` array; the data-access
-expands that input into the right rows. The page reads the flat rows back and
-groups them by date into a `{ date, blocked, ranges }` display shape (a date is
-blocked when it has an `is_available` false row, otherwise its ranges are the
-`is_available` true rows' times truncated to `"HH:MM"`).
-
-This composes with the replace-with-block-wins model `computeSlots` already
-implements from 3b: any override row for a date replaces the recurring rules
-for that date, and a block row makes the whole date unavailable. 3e does not
-import the engine; it only writes the rows the engine reads.
-
-### Block-versus-custom exclusivity drives the shape CHECK
-
-`dateOverrideInputSchema`'s final refine makes the two modes mutually
-exclusive: a blocked day requires an empty `ranges`, an available day requires
-at least one range (each with its end after its start). Because the input can
-only be a well-formed block or a well-formed set of custom ranges, the rows
-`setDateOverrideForUser` produces always satisfy the `availability_overrides`
-shape CHECK from 3a (a blocked row is `is_available` false with null times; a
-custom row is `is_available` true with non-null times and start < end). The
-date is gated by a `"YYYY-MM-DD"` regex plus a Luxon `DateTime.fromISO`
-validity refine, so an impossible date that still matches the shape (for
-example `2026-13-40`) is rejected before it reaches the database.
-
-### Per-date transactional replace
-
-`setDateOverrideForUser` is the per-date analogue of the weekly replace: inside
-one `db.transaction` it deletes the user's existing rows for that single date,
-then inserts the new row (blocked) or rows (one per range). Editing a date is
-just setting it again; there is no per-row diffing. `deleteDateOverrideForUser`
-removes every row for a date and returns a boolean. The override travels from
-the editor to `setDateOverrideAction` as one JSON string in the `override` form
-field (the same single-JSON-field pattern the weekly schedule uses), parsed and
-re-validated with `dateOverrideInputSchema` on the server; the delete action
-format-checks the date field. Every override query is scoped by `userId`, so
-one user can never read, replace, or delete another user's overrides.
+- **Transactional replace, not per-row diffing.** `replaceAvailabilityRulesForUser`
+  (whole week) and `setDateOverrideForUser` (one date) each delete-then-insert
+  in one `db.transaction`. Editing is just setting again. An empty weekly
+  submission is valid and clears all rules.
+- **Variable-length ranges travel as one JSON string** in a single form field
+  (`schedule` / `override`), parsed and re-validated server-side; indexed form
+  fields are deliberately not used.
+- **`"HH:MM"` end to end**, seconds truncated on read (`slice(0, 5)`); the
+  end-after-start refine compares the zero-padded strings lexicographically.
+- **Timezone** is one IANA value in `host_settings` (upserted), re-validated
+  server-side with Luxon `IANAZone.isValidZone`; the client `Intl` list is
+  convenience only.
+- **Date-keyed overrides are replace-with-block-wins** and mutually exclusive
+  (a date is blocked with empty ranges, or available with >=1 range); the
+  `dateOverrideInputSchema` shape guarantees the rows satisfy the 3a
+  `availability_overrides` CHECK, and a `"YYYY-MM-DD"` regex + Luxon validity
+  refine rejects impossible dates.
+- **Independent saves, server-side authz.** Timezone, weekly schedule, and each
+  override save independently; every action resolves `userId` from `auth()` and
+  re-validates; client checks are friendlier feedback, never the gate.
 
 ## Known minor issues
 
