@@ -21,6 +21,7 @@ Version targets and planned work for noCluCal.
 - Phase 3d (weekly availability and timezone management): complete (2026-06-04). Signed-in users set a weekly recurring availability schedule and their booking timezone at `/settings/availability`. Zod validation at `src/lib/availability/validation.ts` (ISO 1 to 7 weekday, wall-clock `"HH:MM"` time ordering, Luxon-backed timezone validity); user-scoped data-access at `src/lib/availability/queries.ts` (transactional weekly-replace where an empty set clears the schedule, plus the host-timezone upsert); the `/settings/availability` page with the Calendly-style weekly editor (per-weekday ranges with add, remove, and copy-to-all-days), the timezone picker populated from `Intl.supportedValuesOf` and re-validated server-side with Luxon, and two independent save actions. The week saves at once as one JSON `schedule` field. Validation unit tests and data-access integration tests; action and component tests deferred per the Phase 2d precedent. Date overrides are 3e; a live slot preview is 3f.
 - Phase 3e (date overrides): complete (2026-06-04). Signed-in users block a single date or give it custom hours that replace the weekly rules for that day, in a third section on `/settings/availability`. `dateOverrideInputSchema` at `src/lib/availability/validation.ts` is date-keyed with block-versus-custom exclusivity (a Luxon validity refine rejects impossible dates); override data-access at `src/lib/availability/queries.ts` (`listAvailabilityOverridesForUser`, the per-date transactional `setDateOverrideForUser`, and `deleteDateOverrideForUser`, all scoped by user); the `OverridesEditor` component and the set and delete actions, the override travelling as one JSON `override` field and re-validated server-side. No schema, migration, or dependency change (the `availability_overrides` table already exists from 3a; the replace-with-block-wins composition already lives in `computeSlots` from 3b). Validation unit tests and data-access integration tests, including replace-clears-previous and per-user isolation; action and component tests deferred per the Phase 2d precedent. This closes the required Phase 3 scope; only the optional live slot preview (3f) remains in Phase 3, and Phase 4 (public booking page plus Redis slot holds) is the next major phase.
 - Phase 3f (settings navigation and shell): complete (2026-06-04). The polish pass that ties the settings pages into a navigable product: a left sidebar over all of `/settings` (`layout.tsx` plus the `"use client"` `settings-nav.tsx` with `usePathname` active-route highlighting), the `/settings` overview home with live read-only status cards for the calendar connection, event types, and availability, a relying-party sign-out action that clears the shared suite session, and one honest Bookings placeholder behind a "soon" nav item ahead of Phase 4. The calendars, event types, and availability pages were reframed to render inside the shell without duplicated chrome (behavior unchanged), and the `proxy.ts` matcher now protects the bare `/settings` route too. Presentational shell, so no new automated tests (no component harness in the repo; Playwright reserved); the existing suite passes unchanged and the shell was verified manually. Grounded in the existing Indigo Signal tokens from `globals.css`; `CALENDAR-PLAYBOOK.md` untouched (app-shell work, not booking core). The optional live slot preview remains the only open Phase 3 item; Phase 4 is the next major phase.
+- Phase 4 started (2026-06-08). Phase 4a (bookings schema and double-booking constraint): complete (2026-06-08). The booking data layer: the `bookings` table (an immutable historical record that snapshots the event type name and duration and keeps a nullable `ON DELETE SET NULL` FK to `event_types`), migration 0003 adding the `btree_gist` extension and the `bookings_no_overlap_per_host` exclusion constraint (`EXCLUDE USING gist` over `host_user_id WITH =` and `tstzrange(starts_at, ends_at) WITH &&` where `status = 'confirmed'`, half-open and per host), status constants, and the host-scoped data-access (`createBooking` mapping the `23P01` exclusion violation to `BookingConflictError`, `listBookingsForHost`, `getBooking`). The exclusion constraint is the hard floor of the double-booking defense. Ships implemented and tested (12 integration cases) but unwired, mirroring how the slot engine shipped in 3b. Deep rationale in `CALENDAR-PLAYBOOK.md` § Booking model. No Redis, orchestration, UI, or runtime consumer yet (4b through 4e).
 
 ---
 
@@ -177,10 +178,38 @@ preview), mirroring how Phase 2 was split into 2a through 2d.
 
 ## Phase 4: Public booking page
 
-- [ ] `/[username]` public profile (reuses the noclulabs username) listing the user's bookable event types.
-- [ ] `/[username]/[event-type-slug]` booking page: slot grid, timezone picker, intake form.
-- [ ] Slot-hold mechanism via Redis (30-second TTL) to prevent double-booking. DB-level unique constraint on `(host_user_id, starts_at)` as belt-and-suspenders.
-- [ ] `bookings` table with confirmation lifecycle (`held` -> `confirmed` -> `cancelled` / `completed`).
+Builds the public booking flow on top of the booking core. Split into 4a
+(bookings schema and the double-booking constraint), 4b (Redis and slot
+holds), 4c (slot-fetch orchestration, the first `computeSlots` runtime
+consumer), 4d (public booking page and confirm flow), and 4e (confirmation
+and polish), mirroring how Phases 2 and 3 were split.
+
+### Phase 4a: bookings schema and double-booking constraint (complete)
+
+- [x] `bookings` table at `src/lib/db/schema/bookings.ts`: an immutable historical record. Snapshots the event type name and duration at booking time; nullable FK to `event_types` (`ON DELETE SET NULL`) so history survives event-type deletion; `host_user_id` FK cascade; invitee fields; `starts_at` / `ends_at` timestamptz; `status` varchar default `confirmed`; `google_event_id` nullable (set in 4d). uuidv7 PK; lookup indexes on `(host_user_id)`, `(host_user_id, starts_at)`, `(event_type_id)`.
+- [x] Status constants at `src/lib/bookings/constants.ts` (`BOOKING_STATUSES`, `BookingStatus`, `DEFAULT_BOOKING_STATUS`). App-level varchar, not a pg enum, so the lifecycle evolves without a migration.
+- [x] Migration `0003` hand-adds the `btree_gist` extension and the `bookings_no_overlap_per_host` exclusion constraint (`EXCLUDE USING gist (host_user_id WITH =, tstzrange(starts_at, ends_at) WITH &&) WHERE (status = 'confirmed')`). Half-open ranges so abutting bookings do not conflict; per host; partial on confirmed. Drizzle does not model `EXCLUDE`; a second `db:generate` confirmed no drop is emitted, so the constraint is hand-managed.
+- [x] Host-scoped data-access at `src/lib/bookings/queries.ts`: `createBooking` (maps the `23P01` exclusion violation to `BookingConflictError` via the drizzle cause chain), `listBookingsForHost`, `getBooking`. No Zod; invitee input validation is deferred to 4d. Ships unwired, like the 3b slot engine.
+- [x] Integration tests at `tests/lib/bookings/queries.test.ts` (12 cases): create-then-read with snapshot and timestamp persistence, list ordering and per-host isolation, cross-host scoping, overlap rejection, abutting allowed (half-open), per-host isolation of the guard, cancelled-does-not-block, and event-type-deletion-keeps-history.
+- [x] Bibles: `CALENDAR-PLAYBOOK.md` gains the `## Booking model` rationale; CLAUDE.md gets the factual table definition, a pointer, and the Drizzle-EXCLUDE gotcha.
+
+### Phase 4b: Redis and slot holds (planned)
+
+- [ ] Redis wired (the suite's shared instance) plus BullMQ for background jobs. Slot-hold mechanism (short TTL, for example 30 seconds) so two invitees racing on the same slot do not both reach the confirm step. The hold is an optimization above the 4a exclusion constraint (the hard floor), not a replacement for it. Holds are Redis keys, not `bookings` rows.
+
+### Phase 4c: slot-fetch orchestration (planned)
+
+- [ ] The first runtime consumer of the Phase 3b `computeSlots` engine: read the host's Google freebusy, feed it plus the host's availability and the chosen event type into `computeSlots`, and return bookable slots for the public page. This is the live-freebusy layer of the double-booking defense.
+
+### Phase 4d: public booking page and confirm flow (planned)
+
+- [ ] `/[username]` public profile (reuses the noclulabs username) listing the user's enabled, bookable event types.
+- [ ] `/[username]/[event-type-slug]` booking page: slot grid, invitee timezone picker, intake form.
+- [ ] Confirm flow: Zod validation of invitee input (first untrusted input into the booking system), take or check the Redis hold, write the `confirmed` booking via `createBooking` (surfacing `BookingConflictError` as a friendly "pick another slot"), and create the Google Calendar event (setting `google_event_id`).
+
+### Phase 4e: confirmation and polish (planned)
+
+- [ ] Booking confirmation surface for the invitee and the host, plus the polish that ties the public flow together. (Email confirmations and reminders remain Phase 5.)
 
 ## Phase 5: Booking confirmation and reminders
 

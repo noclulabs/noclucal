@@ -469,3 +469,120 @@ field (the same single-JSON-field pattern the weekly schedule uses), parsed and
 re-validated with `dateOverrideInputSchema` on the server; the delete action
 format-checks the date field. Every override query is scoped by `userId`, so
 one user can never read, replace, or delete another user's overrides.
+
+## Booking model (Phase 4a)
+
+Phase 4a ships the booking data layer: the `bookings` table, the Postgres
+exclusion constraint that makes overlapping confirmed bookings for a host
+physically impossible, and the booking data-access at
+`src/lib/bookings/queries.ts`. Like the slot engine in 3b, it ships
+implemented and tested but is not yet wired to a runtime path; the public
+booking flow (4b through 4e) is the first consumer. There is no Zod here;
+invitee input validation lands in 4d, where untrusted input enters the
+system. The table definition itself lives in CLAUDE.md § Database / Schema.
+
+### Bookings are an immutable historical record
+
+A confirmed booking is a fact about something that happened, not a live view
+of current configuration. It therefore snapshots the fields it needs to be
+self-describing: `event_type_name` and `duration_minutes` are copied in at
+booking time rather than read back through the FK. The host can rename an
+event type, change its duration, or delete it outright, and existing booking
+history is untouched. This is the same instinct as an invoice line item
+storing the price it was sold at, not joining to today's price list.
+
+### `ON DELETE SET NULL` on the event type FK
+
+`event_type_id` is a nullable FK to `event_types` with `ON DELETE SET NULL`,
+not `CASCADE` and not `RESTRICT`. Cascade would destroy booking history when
+a host tidies up their event types, which is exactly the data loss the
+snapshot design exists to prevent. Restrict would block a host from deleting
+an event type that has ever been booked, which is a hostile constraint on a
+routine action. Set-null keeps the booking, keeps its snapshot, and simply
+drops the now-meaningless pointer. A booking with a null `event_type_id` is
+fully described by its snapshot columns.
+
+### Per-host exclusion constraint as the hard floor
+
+Double-booking is prevented at the database level by
+`bookings_no_overlap_per_host`, an `EXCLUDE USING gist` constraint added by
+hand in migration 0003:
+
+```sql
+EXCLUDE USING gist (
+  host_user_id WITH =,
+  tstzrange(starts_at, ends_at) WITH &&
+) WHERE (status = 'confirmed')
+```
+
+It reads: there may not exist two rows with the same `host_user_id` whose
+`[starts_at, ends_at)` ranges overlap, considering only `confirmed` rows. The
+gist operator class for the equality term needs the `btree_gist` extension,
+created at the top of the migration the same way `citext` was prepended in
+0000. Drizzle does not model `EXCLUDE` constraints, so the schema file does
+not declare it and a re-run of `pnpm db:generate` after the migration applies
+sees nothing to change (confirmed: no drop is emitted). The constraint is
+hand-managed; never let `db:generate` drop it.
+
+Three design points are load-bearing:
+
+- **Half-open ranges.** `tstzrange(starts_at, ends_at)` is `[)` by default, so
+  a booking ending exactly when another starts does not overlap. This matches
+  the half-open convention used throughout slot computation (the buffer
+  overlap rule in 3b is also half-open), so the floor and the engine agree on
+  what "back to back" means: allowed.
+- **The guard is per host, not per event type.** A host cannot be in two
+  meetings at once regardless of which event types they are for, so the
+  constraint keys on `host_user_id`. Two different hosts may hold overlapping
+  bookings freely.
+- **Partial on `status = 'confirmed'`.** Only confirmed bookings reserve time.
+  A cancelled booking is excluded from the index, so it neither conflicts with
+  nor blocks a new confirmed booking in the same window. This is what lets the
+  table retain cancelled rows as history without them poisoning availability.
+
+### Status lifecycle
+
+`status` is a `varchar(20)` with app-level values (`confirmed`, `cancelled`),
+not a pg enum, consistent with the color-as-token decision in 3a: the
+lifecycle evolves without a migration. The constants live at
+`src/lib/bookings/constants.ts` (`BOOKING_STATUSES`, `BookingStatus`,
+`DEFAULT_BOOKING_STATUS`). Held holds are deliberately not rows: a pending
+hold lives in Redis with a short TTL (4b), so the table only ever carries
+`confirmed` and, once cancellation ships, `cancelled` bookings. A new booking
+is always written `confirmed` by `createBooking`.
+
+### Where this sits in the layered double-booking defense
+
+Preventing two invitees from grabbing the same slot is defended at four
+layers, outermost to innermost:
+
+1. **Live freebusy read (4c).** Slot computation injects the host's busy
+   intervals (read from Google) so an already-busy time is never offered.
+   This is a filter, not a guarantee: it races.
+2. **Redis slot hold (4b).** Selecting a slot takes a short-lived hold so two
+   invitees in the same few seconds do not both reach the confirm step. Also
+   not a guarantee: holds expire, Redis can be flushed.
+3. **This exclusion constraint (4a).** The hard floor. Even if every layer
+   above races or is bypassed, the database physically refuses the second
+   overlapping confirmed insert. `createBooking` catches the `23P01` exclusion
+   violation (via the same drizzle `.cause`-chain walk that
+   `event-types/queries.ts` uses for `23505`) and throws `BookingConflictError`,
+   which the confirm flow surfaces as "pick another slot" rather than a 500.
+4. **Google calendar write-back (4d).** The event is created on the host's
+   calendar, so other tools reading that calendar see the time as taken.
+
+The layers above the floor are optimizations that keep the floor from being
+hit in normal operation; the floor is the only one that cannot be raced. 4a
+ships the floor first, on purpose, so everything built on top of it inherits
+a correctness guarantee it cannot undermine.
+
+### Host-scoped data-access
+
+`createBooking`, `listBookingsForHost`, and `getBooking` mirror the per-user
+scoping of `event-types/queries.ts`: `getBooking` filters on both
+`hostUserId` and `id`, so a host cannot read another host's booking by
+guessing its id, and `listBookingsForHost` filters on `hostUserId` and orders
+by `starts_at` ascending. `createBooking` takes a typed `CreateBookingInput`
+(host, the nullable event type id, the name and duration snapshot, invitee
+fields, the invitee timezone for display, and the start and end instants) and
+returns the inserted row.

@@ -9,7 +9,7 @@
 - **Domain:** cal.noclulabs.com (subdomain of noclulabs.com for cookie-based SSO)
 - **Repository:** github.com/noclulabs/noclucal
 - **Hosting:** DigitalOcean Droplet (shared with noclulabs.com and portalNetwork; unique host port)
-- **Status:** Phase 3f complete. Shipped so far: Phase 1 (SSO bridge, `/me`, `noclucal_users` lazy upsert), Phase 2 (Google Calendar provider, connect / disconnect, `/settings/calendars`, AES-256-GCM token encryption), Phase 3a (booking-core storage: `event_types`, `host_settings`, `availability_rules`, `availability_overrides`, the `EVENT_TYPE_COLORS` palette, migration 0002), 3b (the pure `computeSlots` engine, tested but not yet wired to a consumer), 3c (event types management at `/settings/event-types`), 3d (weekly availability and IANA timezone at `/settings/availability`), 3e (date overrides as a third section on that page), and 3f (the settings app shell: sidebar navigation, the `/settings` overview home, sign-out, and a Bookings placeholder). This closes the required Phase 3 scope plus the navigation polish. Remaining in Phase 3: the optional live slot preview (3g, the first `computeSlots` runtime consumer). Phase 4 (public booking page plus Redis slot holds) is the next major phase. Per-phase detail lives in ROADMAP.md and CHANGELOG.md; deep design rationale for the booking core lives in `CALENDAR-PLAYBOOK.md`.
+- **Status:** Phase 4 underway (4a complete). Shipped so far: Phase 1 (SSO bridge, `/me`, `noclucal_users` lazy upsert), Phase 2 (Google Calendar provider, connect / disconnect, `/settings/calendars`, AES-256-GCM token encryption), Phase 3a (booking-core storage: `event_types`, `host_settings`, `availability_rules`, `availability_overrides`, the `EVENT_TYPE_COLORS` palette, migration 0002), 3b (the pure `computeSlots` engine, tested but not yet wired to a consumer), 3c (event types management at `/settings/event-types`), 3d (weekly availability and IANA timezone at `/settings/availability`), 3e (date overrides as a third section on that page), 3f (the settings app shell: sidebar navigation, the `/settings` overview home, sign-out, and a Bookings placeholder), and 4a (the booking data layer: the `bookings` table, the `bookings_no_overlap_per_host` exclusion constraint, and host-scoped data-access, tested but not yet wired to a runtime path). Phase 3 required scope is closed (only the optional live slot preview remains); Phase 4 continues with 4b through 4e. Per-phase detail lives in ROADMAP.md and CHANGELOG.md; booking-core design rationale lives in `CALENDAR-PLAYBOOK.md`.
 
 ## Bible files (canonical set)
 
@@ -111,9 +111,11 @@ noclucal/
         0000_snapshot.json
         0001_snapshot.json
         0002_snapshot.json
+        0003_snapshot.json
       0000_even_the_twelve.sql
       0001_equal_guardsmen.sql
       0002_boring_nighthawk.sql
+      0003_hard_alex_power.sql
   public/
     robots.txt
   scripts/
@@ -166,6 +168,9 @@ noclucal/
         validation.ts
       auth/
         upsert-noclucal-user.ts
+      bookings/
+        constants.ts
+        queries.ts
       calendar/
         providers/
           google.ts
@@ -179,6 +184,7 @@ noclucal/
         schema/
           _types.ts
           availability.ts
+          bookings.ts
           calendar-connections.ts
           event-types.ts
           host-settings.ts
@@ -205,6 +211,8 @@ noclucal/
         validation.test.ts
       auth/
         upsert-noclucal-user.test.ts
+      bookings/
+        queries.test.ts
       calendar/
         providers/
           google.test.ts
@@ -249,7 +257,7 @@ noclucal/
   vitest.config.ts
 ```
 
-The tree reflects current reality through Phase 3e. The per-phase record of which files each phase added (and which dependencies it introduced: `luxon` in 3b, `zod` in 3c) lives in CHANGELOG.md and ROADMAP.md, not here.
+The tree reflects current reality through Phase 4a. The per-phase record of which files each phase added (and which dependencies it introduced: `luxon` in 3b, `zod` in 3c) lives in CHANGELOG.md and ROADMAP.md, not here.
 
 ## Deployment
 
@@ -278,6 +286,7 @@ Phase 1c shipped with `migrator` as the last stage and production restart-looped
 - CSS custom properties defined in `globals.css` using the tokens from the brand style guide.
 - Tailwind classes use the project's custom theme tokens, not arbitrary values.
 - **Drizzle schema-glob hazard.** drizzle-kit picks up any `*.ts` file in `src/lib/db/schema/` regardless of git tracking. A scratch file or stray copy in that directory will get baked into the next generated migration. Always confirm the schema directory contains only intended files before running `pnpm db:generate`.
+- **Hand-managed EXCLUDE constraint.** The `bookings_no_overlap_per_host` exclusion constraint (and its `btree_gist` extension) is hand-added in migration 0003; Drizzle does not model `EXCLUDE`, so `pnpm db:generate` neither creates nor sees it (confirmed: it emits no drop). Never let a future migration drop it; re-add it by hand if the table is ever regenerated.
 
 ### Dependencies
 
@@ -342,6 +351,8 @@ Design rationale for the booking-core tables (`event_types`, `host_settings`, `a
 - **`availability_rules`** (Phase 3a). Recurring weekly availability windows, keyed on `user_id` directly. `id` uuid PK (`uuidv7()`), `user_id` FK cascade, `weekday` smallint (ISO 1 to 7, Monday=1, Sunday=7), `start_time` / `end_time` as Postgres `time` (wall-clock, no timezone), `created_at` / `updated_at`. Lookup indexes on `(user_id)` and `(user_id, weekday)`. Multiple rows per `(user_id, weekday)` are allowed (no unique constraint on the pair). CHECK constraints `availability_rules_weekday_range` (weekday between 1 and 7) and `availability_rules_time_order` (start < end).
 
 - **`availability_overrides`** (Phase 3a). Date-specific exceptions to the recurring schedule. `id` uuid PK (`uuidv7()`), `user_id` FK cascade, `date` date, `is_available` boolean, `start_time` / `end_time` Postgres `time` (both nullable), `created_at` / `updated_at`. Lookup indexes on `(user_id)` and `(user_id, date)`. Multiple rows per `(user_id, date)` are allowed (no unique constraint on the pair). CHECK constraint `availability_overrides_shape` keeps the two modes mutually exclusive and well-formed: either a blocked day (`is_available = false` with null times) or a custom-hours day (`is_available = true` with non-null times and start < end).
+
+- **`bookings`** (Phase 4a). Immutable historical record of confirmed bookings. `id` uuid PK (`uuidv7()`), `event_type_id` uuid FK to `event_types.id` (`ON DELETE SET NULL`, nullable, so history survives event-type deletion), `host_user_id` uuid FK to `noclucal_users.id` (cascade), `event_type_name` varchar(200) and `duration_minutes` integer (snapshots taken at booking time), `invitee_name` varchar(200), `invitee_email` varchar(320), `invitee_note` text nullable, `invitee_timezone` text, `starts_at` / `ends_at` timestamptz, `status` varchar(20) default `confirmed` (app-level token, not a pg enum), `google_event_id` text nullable (set in 4d), `created_at` / `updated_at` timestamptz. Lookup indexes on `(host_user_id)`, `(host_user_id, starts_at)`, and `(event_type_id)`. The `bookings_no_overlap_per_host` exclusion constraint (`EXCLUDE USING gist (host_user_id WITH =, tstzrange(starts_at, ends_at) WITH &&) WHERE status = 'confirmed'`, needing `btree_gist`) makes two overlapping confirmed bookings for one host physically impossible; half-open `tstzrange` (so abutting bookings do not conflict); hand-added in migration 0003 (Drizzle does not model it, see § Conventions). Rationale in CALENDAR-PLAYBOOK.md § Booking model.
 
 ### Migrations
 
