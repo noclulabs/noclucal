@@ -22,6 +22,7 @@ Version targets and planned work for noCluCal.
 - Phase 3e (date overrides): complete (2026-06-04). Signed-in users block a single date or give it custom hours that replace the weekly rules for that day, in a third section on `/settings/availability`. `dateOverrideInputSchema` at `src/lib/availability/validation.ts` is date-keyed with block-versus-custom exclusivity (a Luxon validity refine rejects impossible dates); override data-access at `src/lib/availability/queries.ts` (`listAvailabilityOverridesForUser`, the per-date transactional `setDateOverrideForUser`, and `deleteDateOverrideForUser`, all scoped by user); the `OverridesEditor` component and the set and delete actions, the override travelling as one JSON `override` field and re-validated server-side. No schema, migration, or dependency change (the `availability_overrides` table already exists from 3a; the replace-with-block-wins composition already lives in `computeSlots` from 3b). Validation unit tests and data-access integration tests, including replace-clears-previous and per-user isolation; action and component tests deferred per the Phase 2d precedent. This closes the required Phase 3 scope; only the optional live slot preview (3f) remains in Phase 3, and Phase 4 (public booking page plus Redis slot holds) is the next major phase.
 - Phase 3f (settings navigation and shell): complete (2026-06-04). The polish pass that ties the settings pages into a navigable product: a left sidebar over all of `/settings` (`layout.tsx` plus the `"use client"` `settings-nav.tsx` with `usePathname` active-route highlighting), the `/settings` overview home with live read-only status cards for the calendar connection, event types, and availability, a relying-party sign-out action that clears the shared suite session, and one honest Bookings placeholder behind a "soon" nav item ahead of Phase 4. The calendars, event types, and availability pages were reframed to render inside the shell without duplicated chrome (behavior unchanged), and the `proxy.ts` matcher now protects the bare `/settings` route too. Presentational shell, so no new automated tests (no component harness in the repo; Playwright reserved); the existing suite passes unchanged and the shell was verified manually. Grounded in the existing Indigo Signal tokens from `globals.css`; `CALENDAR-PLAYBOOK.md` untouched (app-shell work, not booking core). The optional live slot preview remains the only open Phase 3 item; Phase 4 is the next major phase.
 - Phase 4 started (2026-06-08). Phase 4a (bookings schema and double-booking constraint): complete (2026-06-08). The booking data layer: the `bookings` table (an immutable historical record that snapshots the event type name and duration and keeps a nullable `ON DELETE SET NULL` FK to `event_types`), migration 0003 adding the `btree_gist` extension and the `bookings_no_overlap_per_host` exclusion constraint (`EXCLUDE USING gist` over `host_user_id WITH =` and `tstzrange(starts_at, ends_at) WITH &&` where `status = 'confirmed'`, half-open and per host), status constants, and the host-scoped data-access (`createBooking` mapping the `23P01` exclusion violation to `BookingConflictError`, `listBookingsForHost`, `getBooking`). The exclusion constraint is the hard floor of the double-booking defense. Ships implemented and tested (12 integration cases) but unwired, mirroring how the slot engine shipped in 3b. Deep rationale in `CALENDAR-PLAYBOOK.md` § Booking model. No Redis, orchestration, UI, or runtime consumer yet (4b through 4e).
+- Phase 4b (available-slots orchestration): complete (2026-06-08). `getAvailableSlots` at `src/lib/booking/available-slots.ts`, the first runtime consumer of the 3b `computeSlots` engine: it loads and gates the event type, resolves the host timezone (falling back to the column default) and availability, reads the host's confirmed bookings, fetches live Google freebusy behind an injectable resolver, and feeds `computeSlots` a busy set that is the union of external (Google) and internal (the host's own bookings). Expressive result (`slots` plus `externalBusyChecked`): no connection degrades gracefully, an unreadable connection throws `CalendarUnavailableError`, and a missing or disabled event type throws `NotBookableError`. Adds `listConfirmedBookingsInWindow` to the bookings data-access. Read-only and not yet wired to a page; 9 integration tests with the resolver stubbed (no network). Redis slot holds, previously planned as 4b, are deferred (see Deferred items). Deep rationale in `CALENDAR-PLAYBOOK.md` § Available-slots orchestration. 4c through 4e remain.
 
 ---
 
@@ -179,10 +180,14 @@ preview), mirroring how Phase 2 was split into 2a through 2d.
 ## Phase 4: Public booking page
 
 Builds the public booking flow on top of the booking core. Split into 4a
-(bookings schema and the double-booking constraint), 4b (Redis and slot
-holds), 4c (slot-fetch orchestration, the first `computeSlots` runtime
-consumer), 4d (public booking page and confirm flow), and 4e (confirmation
-and polish), mirroring how Phases 2 and 3 were split.
+(bookings schema and the double-booking constraint), 4b (available-slots
+orchestration, the first `computeSlots` runtime consumer), 4c (public booking
+page and slot picker), 4d (confirm flow: write the booking, create the Google
+event, conflict handling), and 4e (confirmation and polish, plus the front-door
+routing), mirroring how Phases 2 and 3 were split. Redis-backed slot holds,
+originally planned as a Phase 4 sub-phase, are deferred (see Deferred items):
+the 4a exclusion constraint is the hard floor and 4b's live freebusy read is the
+optimization layer above it for now.
 
 ### Phase 4a: bookings schema and double-booking constraint (complete)
 
@@ -193,23 +198,27 @@ and polish), mirroring how Phases 2 and 3 were split.
 - [x] Integration tests at `tests/lib/bookings/queries.test.ts` (12 cases): create-then-read with snapshot and timestamp persistence, list ordering and per-host isolation, cross-host scoping, overlap rejection, abutting allowed (half-open), per-host isolation of the guard, cancelled-does-not-block, and event-type-deletion-keeps-history.
 - [x] Bibles: `CALENDAR-PLAYBOOK.md` gains the `## Booking model` rationale; CLAUDE.md gets the factual table definition, a pointer, and the Drizzle-EXCLUDE gotcha.
 
-### Phase 4b: Redis and slot holds (planned)
+### Phase 4b: available-slots orchestration (complete)
 
-- [ ] Redis wired (the suite's shared instance) plus BullMQ for background jobs. Slot-hold mechanism (short TTL, for example 30 seconds) so two invitees racing on the same slot do not both reach the confirm step. The hold is an optimization above the 4a exclusion constraint (the hard floor), not a replacement for it. Holds are Redis keys, not `bookings` rows.
+- [x] `getAvailableSlots` at `src/lib/booking/available-slots.ts`, the first runtime consumer of the Phase 3b `computeSlots` engine. Loads and gates the event type, resolves the host timezone (falling back to the column default) and availability, reads the host's confirmed bookings, fetches live Google freebusy, and calls `computeSlots` with `busy = external ∪ internal`. Read-only; no booking write (4d) and no URL resolution (4c).
+- [x] `listConfirmedBookingsInWindow` added to `src/lib/bookings/queries.ts`: a host's confirmed bookings overlapping a half-open window, the internal half of the busy set (so a slot booked through noCluCal is excluded before the Google write-back propagates).
+- [x] Expressive, fail-safe semantics: `{ slots, externalBusyChecked }`; no connection degrades (compute from availability and internal bookings, `externalBusyChecked` false); an unreadable connection throws `CalendarUnavailableError` rather than offering unverified slots; a missing or disabled event type throws `NotBookableError`. The external-busy fetch is behind an injectable resolver so tests run without network.
+- [x] Integration tests at `tests/lib/booking/available-slots.test.ts` (9 cases): connected happy path, no-connection degrade, internal-booking exclusion, external-plus-internal union, cancelled-does-not-block, read-failure refusal, the disabled and missing not-bookable cases, and a min-notice config-flow-through sanity case.
+- [x] Bibles: `CALENDAR-PLAYBOOK.md` gains the `## Available-slots orchestration` section; CLAUDE.md gets a lean pointer under § Slot computation plus the file-tree entries.
+- Redis-backed slot holds, originally this sub-phase, are deferred (see Deferred items).
 
-### Phase 4c: slot-fetch orchestration (planned)
-
-- [ ] The first runtime consumer of the Phase 3b `computeSlots` engine: read the host's Google freebusy, feed it plus the host's availability and the chosen event type into `computeSlots`, and return bookable slots for the public page. This is the live-freebusy layer of the double-booking defense.
-
-### Phase 4d: public booking page and confirm flow (planned)
+### Phase 4c: public booking page and slot picker (planned)
 
 - [ ] `/[username]` public profile (reuses the noclulabs username) listing the user's enabled, bookable event types.
-- [ ] `/[username]/[event-type-slug]` booking page: slot grid, invitee timezone picker, intake form.
-- [ ] Confirm flow: Zod validation of invitee input (first untrusted input into the booking system), take or check the Redis hold, write the `confirmed` booking via `createBooking` (surfacing `BookingConflictError` as a friendly "pick another slot"), and create the Google Calendar event (setting `google_event_id`).
+- [ ] `/[username]/[event-type-slug]` booking page: slot grid driven by `getAvailableSlots`, invitee timezone picker, intake form. Resolves the public `username` and event-type `slug` to the ids `getAvailableSlots` takes.
+
+### Phase 4d: confirm flow (planned)
+
+- [ ] Confirm flow: Zod validation of invitee input (the first untrusted input into the booking system), write the `confirmed` booking via `createBooking` (surfacing `BookingConflictError` as a friendly "pick another slot"), and create the Google Calendar event (setting `google_event_id`). Conflict handling leans on the 4a exclusion constraint.
 
 ### Phase 4e: confirmation and polish (planned)
 
-- [ ] Booking confirmation surface for the invitee and the host, plus the polish that ties the public flow together. (Email confirmations and reminders remain Phase 5.)
+- [ ] Booking confirmation surface for the invitee and the host, the front-door routing that ties the public flow together, and the polish pass. (Email confirmations and reminders remain Phase 5.)
 
 ## Phase 5: Booking confirmation and reminders
 
@@ -266,4 +275,5 @@ Pre and post-booking actions: send Slack message, create Notion page, fire webho
 - **Session revocation gap.** noCluCal trusts the noclulabs-signed JWT until natural expiry. A revoked noclulabs session (password change, account deletion) remains valid in noCluCal until the JWT expires (Auth.js default 30 days). Closing the gap requires either a `/api/auth/validate-session` endpoint on noclulabs that noCluCal pings on session resolution (with caching), or promoting noclulabs to a proper OIDC provider with token introspection. Revisit when there are real users in noCluCal.
 - **Redirect sanitizer extension.** noclulabs' `sanitizeRedirect` currently rejects any non-same-origin path. The SSO sign-in redirect from cal.noclulabs.com needs `cal.noclulabs.com` (and future suite domains) to be allowed targets. A suite-aware sanitizer lives at the noclulabs side and lists permitted domains explicitly. Phase 1 of noCluCal will require a coordinated PR against noclulabs.com to add this.
 - **CALENDAR-PLAYBOOK.md.** Resolved (2026-06-04). Added as a read-on-demand reference layer (not a bible file) when CLAUDE.md crossed the 40,000-char context budget. It holds the deep per-feature design rationale for the booking core (calendar internals, slot computation, event types, availability); CLAUDE.md keeps a summary plus a pointer per section. The bible set stays at four; future reference files split by durable domain (e.g. an `AUTH-PLAYBOOK.md`), never by phase.
-- **Webhook subscriptions for Google Calendar.** Push notifications via the watch channel API require BullMQ for renewal (channels expire at 7 days max). Redis and BullMQ land in Phase 4 for slot holds; webhook support is deferred until then. When this ships, it adds a separate extension interface (e.g. `WebhookCapableProvider`) alongside `CalendarProvider`, plus a BullMQ recurring job that renews channels on a daily cadence. Until webhooks ship, freebusy is read synchronously on demand (no cache; no invalidation needed).
+- **Redis-backed slot holds.** Originally planned as Phase 4b, a short-TTL hold (Redis key, not a `bookings` row) so two invitees racing on the same slot do not both reach the confirm step. Deferred out of the committed Phase 4 plan because the 4a exclusion constraint is the hard floor against double bookings and 4b's live freebusy read plus internal-booking union is the optimization layer above it; a hold only narrows the race window further. Revisit if real-world contention shows the freebusy-plus-constraint pair is not enough. When it ships it also brings Redis and BullMQ to the suite, which unblocks the webhook work below.
+- **Webhook subscriptions for Google Calendar.** Push notifications via the watch channel API require BullMQ for renewal (channels expire at 7 days max). BullMQ (and Redis) are deferred along with slot holds (above); webhook support is deferred until they land. When this ships, it adds a separate extension interface (e.g. `WebhookCapableProvider`) alongside `CalendarProvider`, plus a BullMQ recurring job that renews channels on a daily cadence. Until webhooks ship, freebusy is read synchronously on demand (no cache; no invalidation needed).

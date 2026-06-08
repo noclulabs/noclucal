@@ -9,7 +9,7 @@
 - **Domain:** cal.noclulabs.com (subdomain of noclulabs.com for cookie-based SSO)
 - **Repository:** github.com/noclulabs/noclucal
 - **Hosting:** DigitalOcean Droplet (shared with noclulabs.com and portalNetwork; unique host port)
-- **Status:** Phase 4 underway (4a complete). Shipped so far: Phase 1 (SSO bridge, `/me`, `noclucal_users` lazy upsert), Phase 2 (Google Calendar provider, connect / disconnect, `/settings/calendars`, AES-256-GCM token encryption), Phase 3a (booking-core storage: `event_types`, `host_settings`, `availability_rules`, `availability_overrides`, the `EVENT_TYPE_COLORS` palette, migration 0002), 3b (the pure `computeSlots` engine, tested but not yet wired to a consumer), 3c (event types management at `/settings/event-types`), 3d (weekly availability and IANA timezone at `/settings/availability`), 3e (date overrides as a third section on that page), 3f (the settings app shell: sidebar navigation, the `/settings` overview home, sign-out, and a Bookings placeholder), and 4a (the booking data layer: the `bookings` table, the `bookings_no_overlap_per_host` exclusion constraint, and host-scoped data-access, tested but not yet wired to a runtime path). Phase 3 required scope is closed (only the optional live slot preview remains); Phase 4 continues with 4b through 4e. Per-phase detail lives in ROADMAP.md and CHANGELOG.md; booking-core design rationale lives in `CALENDAR-PLAYBOOK.md`.
+- **Status:** Phase 4 underway (4a, 4b complete). Shipped so far: Phase 1 (SSO bridge, `/me`, `noclucal_users` lazy upsert), Phase 2 (Google Calendar provider, connect / disconnect, `/settings/calendars`, AES-256-GCM token encryption), Phase 3a (booking-core storage: `event_types`, `host_settings`, `availability_rules`, `availability_overrides`, the `EVENT_TYPE_COLORS` palette, migration 0002), 3b (the pure `computeSlots` engine, tested but not yet wired to a consumer), 3c (event types management at `/settings/event-types`), 3d (weekly availability and IANA timezone at `/settings/availability`), 3e (date overrides as a third section on that page), 3f (the settings app shell: sidebar navigation, the `/settings` overview home, sign-out, and a Bookings placeholder), 4a (the booking data layer: the `bookings` table, the `bookings_no_overlap_per_host` exclusion constraint, and host-scoped data-access, tested but not yet wired to a runtime path), and 4b (`getAvailableSlots` at `src/lib/booking/available-slots.ts`, the first runtime consumer of `computeSlots`: busy = Google freebusy ∪ confirmed bookings, read-only, not yet wired to a page). Phase 3 required scope is closed (only the optional live slot preview remains); Phase 4 continues with 4c through 4e. Per-phase detail lives in ROADMAP.md and CHANGELOG.md; booking-core design rationale lives in `CALENDAR-PLAYBOOK.md`.
 
 ## Bible files (canonical set)
 
@@ -168,6 +168,8 @@ noclucal/
         validation.ts
       auth/
         upsert-noclucal-user.ts
+      booking/
+        available-slots.ts
       bookings/
         constants.ts
         queries.ts
@@ -211,6 +213,8 @@ noclucal/
         validation.test.ts
       auth/
         upsert-noclucal-user.test.ts
+      booking/
+        available-slots.test.ts
       bookings/
         queries.test.ts
       calendar/
@@ -493,6 +497,13 @@ Slot computation:
   (round-trip check fails), fall-back ambiguous times are offered once.
 - **min-notice / max-future clamp the slot start**, not its end; an empty
   effective window yields `[]`.
+
+`getAvailableSlots` at `src/lib/booking/available-slots.ts` (Phase 4b) is the
+runtime entry to this engine: `busy = external ∪ internal` (Google freebusy ∪
+the host's confirmed bookings). No connection degrades; an unreadable one
+throws `CalendarUnavailableError`, a missing or disabled event type throws
+`NotBookableError`, and the external fetch is behind an injectable resolver for
+tests. Full rationale in `CALENDAR-PLAYBOOK.md` § Available-slots orchestration.
 
 ## Event type management
 

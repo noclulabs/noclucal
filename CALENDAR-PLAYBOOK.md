@@ -556,12 +556,16 @@ is always written `confirmed` by `createBooking`.
 Preventing two invitees from grabbing the same slot is defended at four
 layers, outermost to innermost:
 
-1. **Live freebusy read (4c).** Slot computation injects the host's busy
-   intervals (read from Google) so an already-busy time is never offered.
+1. **Live freebusy read plus internal-booking union (4b).** `getAvailableSlots`
+   injects the host's busy intervals (live Google freebusy unioned with the
+   host's own confirmed bookings) so an already-busy time is never offered.
    This is a filter, not a guarantee: it races.
-2. **Redis slot hold (4b).** Selecting a slot takes a short-lived hold so two
-   invitees in the same few seconds do not both reach the confirm step. Also
-   not a guarantee: holds expire, Redis can be flushed.
+2. **Redis slot hold (deferred).** A short-lived hold so two invitees in the
+   same few seconds do not both reach the confirm step would narrow the race
+   further, but holds expire and Redis can be flushed, so it was never the
+   floor. Deferred out of the committed Phase 4 plan (see ROADMAP § Deferred
+   items); the freebusy-plus-union filter above and the constraint below stand
+   without it.
 3. **This exclusion constraint (4a).** The hard floor. Even if every layer
    above races or is bypassed, the database physically refuses the second
    overlapping confirmed insert. `createBooking` catches the `23P01` exclusion
@@ -586,3 +590,87 @@ by `starts_at` ascending. `createBooking` takes a typed `CreateBookingInput`
 (host, the nullable event type id, the name and duration snapshot, invitee
 fields, the invitee timezone for display, and the start and end instants) and
 returns the inserted row.
+
+## Available-slots orchestration (Phase 4b)
+
+Phase 4b ships `getAvailableSlots` at `src/lib/booking/available-slots.ts`, the
+first runtime consumer of the pure `computeSlots` engine. Where the engine (3b)
+is pure and takes injected busy intervals, the orchestration does the real I/O:
+it loads the event type, the host timezone, the availability rules and
+overrides, reads the host's confirmed bookings, fetches live Google freebusy,
+and hands the engine the busy set. It is read-only: no booking is written (that
+is 4d), and it does not resolve a public `username` / event-type `slug` to ids
+(that is 4c). Like the engine and the booking data layer before it, it ships
+implemented and tested but is not yet wired to a page.
+
+### Busy is the union of external and internal
+
+The engine's `busy` input is `external ∪ internal`. External busy is the host's
+live Google freebusy for the window. Internal busy is the host's own
+`confirmed` bookings overlapping the window, read straight from the `bookings`
+table via `listConfirmedBookingsInWindow`.
+
+Reading internal bookings directly, rather than relying on the Google
+write-back to show them as busy, closes a propagation-lag gap: when a booking is
+confirmed (4d), the Google event is created on the host's calendar, but that
+event is not instantly visible to a fresh freebusy query (Google's own
+propagation, and our refresh cadence, both take time). In that window a slot
+just booked through noCluCal would still be offered by an external-only busy
+read. Including the host's confirmed bookings in the busy set means a slot
+booked through noCluCal never reappears, regardless of write-back timing.
+
+This is the live-read layer (layer 1) of the four-layer double-booking defense
+documented in § Booking model. It is a filter, not a guarantee: it races, which
+is exactly why the exclusion constraint (layer 3) is the hard floor underneath
+it. The orchestration's job is to keep the floor from being hit in normal
+operation by not offering times that are already taken.
+
+### No connection degrades; an unreadable connection refuses
+
+The result is expressive rather than all-or-nothing: `{ slots,
+externalBusyChecked }`. The two failure-ish states are deliberately different:
+
+- **No calendar connection** is normal, not an error. The host may not have
+  connected Google yet. Slots are computed from availability and internal
+  bookings only, and `externalBusyChecked` is `false` so the caller (4c) can
+  decide how to present a host whose external calendar was not consulted. The
+  call does not throw.
+- **A connection that exists but cannot be read** (token refresh failed, or the
+  freebusy call failed) throws `CalendarUnavailableError`. We refuse to offer
+  slots we could not verify against the host's real calendar, because offering
+  an unverified slot risks a double booking the invitee would experience as a
+  broken promise. Refusing is the safe failure.
+
+A missing or disabled event type throws `NotBookableError`: there is nothing
+bookable to compute slots for, and surfacing that as a clean error beats
+returning an empty slot list that looks like "no availability".
+
+### The injectable resolver seam
+
+The external-busy fetch sits behind an `ExternalBusyResolver`: given a host and
+a window, it returns `{ connected, busy }`, returning `connected: false` when
+the host has no connection and throwing when a connection exists but cannot be
+read. `getAvailableSlots` takes an optional `resolveExternalBusy` dependency and
+falls back to a default implementation that does the real
+`getConnectionForUser` → `getValidTokensForConnection` (the 60-second-margin
+refresh wrapper) → `provider.getFreeBusy` path. The default lets a
+`RefreshFailedError` or a freebusy failure propagate; the orchestrator catches
+any throw from the resolver and re-wraps it as `CalendarUnavailableError`.
+
+The seam exists for testability: the integration tests seed a real database and
+inject a stub resolver, so the whole orchestration (event-type gating, timezone
+fallback, availability mapping, internal-booking read, the union, and the
+expressive result) is exercised against real rows without a network call.
+`available-slots.ts` statically imports the side-effecting
+`providers/register-all` so the default resolver's `getProvider("google")` (and
+the refresh path inside `getValidTokensForConnection`) resolve at runtime; tests
+never reach that code path.
+
+### Window expansion
+
+The freebusy window is the requested `[rangeStart, rangeEnd]` expanded on each
+side by the larger of the two buffers. A busy block sitting just outside the
+requested range can still block an edge slot through that slot's buffer guard,
+so the busy read has to look slightly wider than the range itself. The same
+expanded window bounds both the external freebusy query and the internal
+confirmed-bookings read.
