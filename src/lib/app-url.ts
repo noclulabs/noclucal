@@ -18,3 +18,17 @@ export function getAppOrigin(): string {
   const raw = process.env.AUTH_URL || "http://localhost:3000";
   return raw.replace(/\/+$/, "");
 }
+
+/**
+ * Builds the absolute public booking URL for a host's event type:
+ * `<origin>/<username>/<slug>`. The origin comes from `getAppOrigin()`, never a
+ * hardcoded host, so the link is correct in dev and prod. Both segments are
+ * URL-encoded (slugs are already kebab-case and usernames URL-safe, so this is
+ * defensive). This is the single place the public-route shape is constructed,
+ * so the settings share link and the `/[username]/[slug]` route stay in step.
+ */
+export function publicBookingUrl(username: string, slug: string): string {
+  return `${getAppOrigin()}/${encodeURIComponent(username)}/${encodeURIComponent(
+    slug,
+  )}`;
+}

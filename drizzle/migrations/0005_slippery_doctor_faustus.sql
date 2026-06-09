@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "noclucal_users_username_unique" ON "noclucal_users" USING btree ("username");

@@ -714,8 +714,12 @@ up by `(hostUserId, slug)`, gating on `enabled`. Unknown user, unknown slug, and
 disabled event type all collapse to a single `null` so the page renders one
 404 via `notFound()`. The `enabled` gate lives in the resolver, not in
 `getEventTypeBySlug`, so later flows can reuse the slug lookup without the gate.
-The lookup assumes `username` is unique; the column is not yet constrained
-unique (logged as a follow-up).
+The lookup resolves a host by `username`, which is unique as of Phase 4e
+(`noclucal_users_username_unique`, migration 0005), so it returns at most one
+host. The absolute share link a host copies from `/settings/event-types` is
+built by `publicBookingUrl(username, slug)` in `src/lib/app-url.ts`
+(`<getAppOrigin()>/<username>/<slug>`), the single place the public-route shape
+is constructed so the link and the route stay in step.
 
 The page fetches `getAvailableSlots` for `[now, now + min(maxFutureMinutes, 90
 days)]`, capping the horizon a single render asks of the engine and Google

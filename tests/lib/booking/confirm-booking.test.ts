@@ -113,6 +113,7 @@ describe("confirmBooking", () => {
     if (res.status !== "success") throw new Error("expected success");
     expect(res.confirmation.eventName).toBe("Intro call");
     expect(res.confirmation.hostName).toBe("Alice");
+    expect(res.confirmation.inviteeEmail).toBe("carol@example.com");
     expect(res.confirmation.startIso).toBe(START_ISO);
     expect(res.confirmation.meetLink).toBe(GOOGLE_REFS.meetLink);
 

@@ -5,7 +5,9 @@ import {
   EVENT_TYPE_COLOR_HEX,
   type EventTypeColor,
 } from "@/lib/event-types/colors";
+import { publicBookingUrl } from "@/lib/app-url";
 import { deleteEventTypeAction } from "./actions";
+import { CopyLink } from "./copy-link";
 
 // Depends on the session cookie, so it must never be statically prerendered.
 export const dynamic = "force-dynamic";
@@ -19,6 +21,7 @@ export default async function EventTypesPage() {
   }
 
   const eventTypes = await listEventTypesForUser(session.user.id);
+  const username = session.user.username;
 
   return (
     <>
@@ -45,45 +48,48 @@ export default async function EventTypesPage() {
           {eventTypes.map((et) => (
             <li
               key={et.id}
-              className="bg-surface rounded-[20px] p-5 flex items-center justify-between gap-4"
+              className="bg-surface rounded-[20px] p-5 flex flex-col gap-4"
             >
-              <div className="flex items-center gap-4 min-w-0">
-                <span
-                  aria-hidden
-                  className="h-3 w-3 shrink-0 rounded-full"
-                  style={{
-                    backgroundColor:
-                      EVENT_TYPE_COLOR_HEX[et.color as EventTypeColor] ??
-                      "var(--color-foreground-muted)",
-                  }}
-                />
-                <div className="min-w-0">
-                  <p className="text-sm font-medium text-foreground truncate">
-                    {et.name}
-                  </p>
-                  <p className="text-xs text-foreground-muted truncate">
-                    /{et.slug} &middot; {et.durationMinutes} min &middot;{" "}
-                    {et.enabled ? "Enabled" : "Disabled"}
-                  </p>
+              <div className="flex items-center justify-between gap-4">
+                <div className="flex items-center gap-4 min-w-0">
+                  <span
+                    aria-hidden
+                    className="h-3 w-3 shrink-0 rounded-full"
+                    style={{
+                      backgroundColor:
+                        EVENT_TYPE_COLOR_HEX[et.color as EventTypeColor] ??
+                        "var(--color-foreground-muted)",
+                    }}
+                  />
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-foreground truncate">
+                      {et.name}
+                    </p>
+                    <p className="text-xs text-foreground-muted truncate">
+                      /{et.slug} &middot; {et.durationMinutes} min &middot;{" "}
+                      {et.enabled ? "Enabled" : "Disabled"}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3 shrink-0">
+                  <Link
+                    href={`/settings/event-types/${et.id}`}
+                    className="inline-flex items-center rounded-full border-[1.5px] border-border px-4 py-1.5 text-xs font-medium text-foreground transition-colors hover:border-foreground-muted"
+                  >
+                    Edit
+                  </Link>
+                  <form action={deleteEventTypeAction}>
+                    <input type="hidden" name="id" value={et.id} />
+                    <button
+                      type="submit"
+                      className="inline-flex items-center rounded-full border-[1.5px] border-border px-4 py-1.5 text-xs font-medium text-foreground-muted transition-colors hover:border-foreground-muted hover:text-foreground"
+                    >
+                      Delete
+                    </button>
+                  </form>
                 </div>
               </div>
-              <div className="flex items-center gap-3 shrink-0">
-                <Link
-                  href={`/settings/event-types/${et.id}`}
-                  className="inline-flex items-center rounded-full border-[1.5px] border-border px-4 py-1.5 text-xs font-medium text-foreground transition-colors hover:border-foreground-muted"
-                >
-                  Edit
-                </Link>
-                <form action={deleteEventTypeAction}>
-                  <input type="hidden" name="id" value={et.id} />
-                  <button
-                    type="submit"
-                    className="inline-flex items-center rounded-full border-[1.5px] border-border px-4 py-1.5 text-xs font-medium text-foreground-muted transition-colors hover:border-foreground-muted hover:text-foreground"
-                  >
-                    Delete
-                  </button>
-                </form>
-              </div>
+              <CopyLink url={publicBookingUrl(username, et.slug)} />
             </li>
           ))}
         </ul>

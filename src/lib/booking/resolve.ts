@@ -30,9 +30,8 @@ export async function resolvePublicEventType(args: {
   slug: string;
 }): Promise<ResolvedPublicEventType | null> {
   // `username` is citext, so this match is case-insensitive at the database
-  // level. It assumes `username` is unique across `noclucal_users`; the column
-  // is not yet constrained unique (flagged as a PR follow-up), so a hypothetical
-  // duplicate would resolve to whichever row the database returns first.
+  // level, and it is unique (`noclucal_users_username_unique`, migration 0005),
+  // so this resolves to at most one host.
   const host = await db.query.noclucalUsers.findFirst({
     where: eq(schema.noclucalUsers.username, args.username),
   });
