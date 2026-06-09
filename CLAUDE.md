@@ -98,170 +98,30 @@ noCluCal is a relying party to noclulabs.com's identity. Mechanics:
 
 ## File Structure
 
-```
-noclucal/
-  .github/
-    workflows/
-      ci.yml
-      deploy.yml
-  drizzle/
-    migrations/
-      meta/
-        _journal.json
-        0000_snapshot.json
-        0001_snapshot.json
-        0002_snapshot.json
-        0003_snapshot.json
-      0000_even_the_twelve.sql
-      0001_equal_guardsmen.sql
-      0002_boring_nighthawk.sql
-      0003_hard_alex_power.sql
-  public/
-    robots.txt
-  scripts/
-    db-smoke-test.ts
-    db-test-setup.ts
-  src/
-    app/
-      api/
-        auth/
-          [...nextauth]/
-            route.ts
-        calendar/
-          google/
-            callback/
-              route.ts
-            connect/
-              route.ts
-      me/
-        page.tsx
-      settings/
-        availability/
-          actions.ts
-          availability-editor.tsx
-          overrides-editor.tsx
-          page.tsx
-          timezone-picker.tsx
-        bookings/
-          page.tsx
-        calendars/
-          actions.ts
-          page.tsx
-        event-types/
-          [id]/
-            page.tsx
-          new/
-            page.tsx
-          actions.ts
-          event-type-form.tsx
-          page.tsx
-        actions.ts
-        layout.tsx
-        page.tsx
-        settings-nav.tsx
-      globals.css
-      layout.tsx
-      page.tsx
-    lib/
-      availability/
-        queries.ts
-        validation.ts
-      auth/
-        upsert-noclucal-user.ts
-      booking/
-        available-slots.ts
-      bookings/
-        constants.ts
-        queries.ts
-      calendar/
-        providers/
-          google.ts
-          index.ts
-          register-all.ts
-        connections.ts
-        crypto.ts
-        oauth-state.ts
-        types.ts
-      db/
-        schema/
-          _types.ts
-          availability.ts
-          bookings.ts
-          calendar-connections.ts
-          event-types.ts
-          host-settings.ts
-          index.ts
-          users.ts
-        index.ts
-      event-types/
-        colors.ts
-        queries.ts
-        validation.ts
-      scheduling/
-        compute-slots.ts
-        intervals.ts
-        types.ts
-      app-url.ts
-      version.ts
-    auth.config.ts
-    auth.ts
-    proxy.ts
-  tests/
-    lib/
-      availability/
-        queries.test.ts
-        validation.test.ts
-      auth/
-        upsert-noclucal-user.test.ts
-      booking/
-        available-slots.test.ts
-      bookings/
-        queries.test.ts
-      calendar/
-        providers/
-          google.test.ts
-          register-all.test.ts
-          registry.test.ts
-        connections.test.ts
-        crypto.test.ts
-        oauth-state.test.ts
-      db/
-        schema/
-          availability.test.ts
-          calendar-connections.test.ts
-          event-types.test.ts
-          host-settings.test.ts
-      event-types/
-        colors.test.ts
-        queries.test.ts
-        validation.test.ts
-      scheduling/
-        compute-slots.test.ts
-        intervals.test.ts
-      app-url.test.ts
-    setup.ts
-    smoke.test.ts
-  .dockerignore
-  .env.example
-  .gitignore
-  CHANGELOG.md
-  CLAUDE.md
-  docker-compose.dev.yml
-  docker-compose.yml
-  Dockerfile
-  drizzle.config.ts
-  eslint.config.mjs
-  next.config.ts
-  package.json
-  pnpm-lock.yaml
-  postcss.config.mjs
-  README.md
-  ROADMAP.md
-  tsconfig.json
-  vitest.config.ts
-```
+A top-level orientation map, not an exhaustive listing. The repo is the source
+of truth for the full file list: run `git ls-files` for the always-current set.
+A PR updates this map only when it adds a new top-level area, never for every
+new file (the principle the Schema section applies to column structure: the
+source files own the detail).
 
-The tree reflects current reality through Phase 4a. The per-phase record of which files each phase added (and which dependencies it introduced: `luxon` in 3b, `zod` in 3c) lives in CHANGELOG.md and ROADMAP.md, not here.
+- **`src/lib/`** is the domain core, one subdirectory per area:
+  - `db/` Drizzle schema (one file per table), lazy pool / client, schema barrel.
+  - `calendar/` the `CalendarProvider` abstraction, Google provider, token crypto, connection store, OAuth state.
+  - `scheduling/` the pure `computeSlots` engine, interval helpers, types.
+  - `event-types/` config, Zod validation, color palette, data-access.
+  - `availability/` weekly rules, date overrides, timezone validation, queries.
+  - `booking/` the `getAvailableSlots` orchestration over `computeSlots`.
+  - `bookings/` confirmed-booking records, constants, data-access.
+  - `auth/` the lazy `noclucal_users` upsert; plus top-level helpers (`app-url.ts`, `version.ts`).
+- **`src/app/`** the App Router tree: root layout / page / `globals.css`, `me/`, `api/` (Auth.js handler, Google OAuth connect / callback), and `settings/` (the shell `layout.tsx`, `settings-nav.tsx`, the `/settings` overview, and the event-types, availability, calendars, and bookings-placeholder sections, each a page plus server `actions.ts`).
+- **`src/auth.ts`, `src/auth.config.ts`, `src/proxy.ts`** the Auth.js relying-party wiring: server, edge-safe, route-protecting proxy (see § Auth).
+- **`tests/`** mirrors `src/` (Vitest), plus `setup.ts` and top-level `smoke.test.ts`.
+- **`drizzle/migrations/`** the numbered SQL migrations and Drizzle's `meta/` journal.
+- **`scripts/`** DB smoke-test and CI test-setup; **`public/`** static assets; **`.github/workflows/`** CI and deploy pipelines.
+- **Root** the build and tooling config (`package.json`, `tsconfig.json`, `next.config.ts`, `drizzle.config.ts`, `vitest.config.ts`, ESLint / PostCSS config, `Dockerfile` and Compose files, `.env.example`).
+- **Bible set:** CLAUDE.md, README.md, ROADMAP.md, CHANGELOG.md. **Reference layer:** CALENDAR-PLAYBOOK.md (read-on-demand booking-core rationale).
+
+Per-phase file and dependency history (`luxon` in 3b, `zod` in 3c) lives in CHANGELOG.md and ROADMAP.md, not here.
 
 ## Deployment
 
