@@ -10,7 +10,7 @@ Identity federates from noclulabs.com via a shared-cookie SSO bridge. One noClu 
 - TypeScript (strict mode)
 - Tailwind CSS v4
 - PostgreSQL 18 via Drizzle ORM
-- Redis with BullMQ for background jobs and slot holds
+- Redis with BullMQ for background jobs
 - Auth.js v5 (`next-auth@beta`) in SSO relying-party mode
 - Luxon for timezone math
 - Resend with React Email for transactional email

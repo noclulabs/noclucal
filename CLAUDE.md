@@ -57,7 +57,7 @@ Every PR's done-definition includes a "Bible file updates (REQUIRED)" section. T
 - **Styling:** Tailwind CSS v4
 - **Font:** Space Grotesk (inherited from noclulabs design system, via `next/font/google`)
 - **Database:** PostgreSQL 18 via Drizzle ORM with the `pg` driver
-- **Caching and queues:** Redis with BullMQ for slot holds, rate limiting, and background jobs (confirmation email, reminders, OAuth token refresh, webhook processing)
+- **Caching and queues:** Redis with BullMQ for rate limiting and background jobs (confirmation email, reminders, OAuth token refresh, webhook processing)
 - **Auth:** Auth.js v5 (`next-auth@beta`) in SSO relying-party mode (see § Identity bridge)
 - **Time and timezones:** Luxon (IANA tz support, RRULE helpers; chosen over date-fns-tz for the recurrence story)
 - **Email:** Resend with React Email templates
@@ -250,7 +250,7 @@ startup before any code path that calls `getProvider`.
 
 Webhook subscription methods are intentionally NOT part of the
 `CalendarProvider` interface yet. Watch channel renewal needs BullMQ for
-recurring jobs, which lands with Redis in Phase 4. When webhooks ship, they
+recurring jobs, which lands with Redis in Phase 5. When webhooks ship, they
 go on a separate extension interface that webhook-capable providers
 implement in addition to the base `CalendarProvider`.
 
