@@ -248,7 +248,7 @@ the busy intervals. There is no system clock read, no DB access, and no
 network. Busy times are injected (mirroring `CalendarProvider.getFreeBusy`'s
 `{ start, end }` shape) rather than fetched, which is what makes the DST and
 edge-case matrix fully testable offline. The orchestration that actually
-reads Google freebusy and persists holds is a later phase.
+reads Google freebusy is a later phase.
 
 ### Invitee timezone is not an input
 
@@ -547,9 +547,11 @@ not a pg enum, consistent with the color-as-token decision in 3a: the
 lifecycle evolves without a migration. The constants live at
 `src/lib/bookings/constants.ts` (`BOOKING_STATUSES`, `BookingStatus`,
 `DEFAULT_BOOKING_STATUS`). Held holds are deliberately not rows: a pending
-hold lives in Redis with a short TTL (4b), so the table only ever carries
-`confirmed` and, once cancellation ships, `cancelled` bookings. A new booking
-is always written `confirmed` by `createBooking`.
+hold would be a short-TTL Redis key rather than a `bookings` row, and that
+Redis hold is deferred (see § Where this sits in the layered double-booking
+defense), so the table only ever carries `confirmed` and, once cancellation
+ships, `cancelled` bookings. A new booking is always written `confirmed` by
+`createBooking`.
 
 ### Where this sits in the layered double-booking defense
 
