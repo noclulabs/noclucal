@@ -1,4 +1,4 @@
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, gt, lt } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
 import type { BookingRow } from "@/lib/db/schema/bookings";
 import { DEFAULT_BOOKING_STATUS } from "./constants";
@@ -112,4 +112,34 @@ export async function getBooking(args: {
     ),
   });
   return row ?? null;
+}
+
+/**
+ * A host's confirmed bookings whose `[startsAt, endsAt)` overlaps the half-open
+ * window `[windowStart, windowEnd)`. Scoped to the host and to confirmed
+ * status, so cancelled bookings never block availability. This is the internal
+ * half of the busy set in `getAvailableSlots`: a slot already booked through
+ * noCluCal is excluded immediately, before the Google write-back propagates
+ * (see CALENDAR-PLAYBOOK.md § Available-slots orchestration). Overlap is
+ * half-open (`startsAt < windowEnd AND endsAt > windowStart`), matching the
+ * convention used throughout slot computation, so a booking abutting a window
+ * edge does not count.
+ */
+export async function listConfirmedBookingsInWindow(
+  hostUserId: string,
+  windowStart: Date,
+  windowEnd: Date,
+): Promise<BookingRow[]> {
+  return db
+    .select()
+    .from(schema.bookings)
+    .where(
+      and(
+        eq(schema.bookings.hostUserId, hostUserId),
+        eq(schema.bookings.status, DEFAULT_BOOKING_STATUS),
+        lt(schema.bookings.startsAt, windowEnd),
+        gt(schema.bookings.endsAt, windowStart),
+      ),
+    )
+    .orderBy(asc(schema.bookings.startsAt));
 }
