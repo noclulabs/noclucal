@@ -67,6 +67,27 @@ export async function getEventType(args: {
   return row ?? null;
 }
 
+/**
+ * A single event type by slug, scoped to the owning user. Filtering on both
+ * `userId` and `slug` resolves the slug within one host's set (slugs are unique
+ * per user via `event_types_user_slug_unique`). Does NOT filter on `enabled`:
+ * the caller decides whether a disabled event type counts (the public resolver
+ * gates on `enabled`; later flows may want the row regardless). Returns null
+ * when no row matches.
+ */
+export async function getEventTypeBySlug(args: {
+  userId: string;
+  slug: string;
+}): Promise<EventTypeRow | null> {
+  const row = await db.query.eventTypes.findFirst({
+    where: and(
+      eq(schema.eventTypes.userId, args.userId),
+      eq(schema.eventTypes.slug, args.slug),
+    ),
+  });
+  return row ?? null;
+}
+
 /** Insert a new event type owned by `userId`. Throws SlugConflictError on a
  *  duplicate (userId, slug). */
 export async function createEventType(

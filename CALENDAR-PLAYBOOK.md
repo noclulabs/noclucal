@@ -674,3 +674,81 @@ requested range can still block an edge slot through that slot's buffer guard,
 so the busy read has to look slightly wider than the range itself. The same
 expanded window bounds both the external freebusy query and the internal
 confirmed-bookings read.
+
+## Public booking page (Phase 4c)
+
+Phase 4c ships the first invitee-facing surface: the public booking page at
+`/[username]/[slug]` (`src/app/[username]/[slug]/page.tsx` plus the
+`booking-picker.tsx` client component), with `resolvePublicEventType` at
+`src/lib/booking/resolve.ts` and `getEventTypeBySlug` in
+`src/lib/event-types/queries.ts` for route resolution. It is read-only: browse
+the host's available times and select one. The invitee form, the confirm
+action, the booking write, the Google event, and the confirmation screen are
+4d, so selection ends at a summary with no form and no confirm control.
+
+### Route shape, public and dynamic
+
+The route is a root-level two-segment dynamic route, anonymous and outside the
+`proxy.ts` auth matcher (the matcher only covers `/me`, `/settings`, and the
+Google connect route, so nothing extra was needed). Static routes (`/me`,
+`/settings`) take precedence over the dynamic segment. The page is
+`export const dynamic = "force-dynamic"`: it reads live freebusy on every
+request, so it must never be statically generated or cached. The page is
+reachable only by its exact URL; no front door links to it yet (that is 4e), so
+it is testable without being publicly surfaced (the root layout already sets
+`robots: noindex`).
+
+The root-level `[username]/[slug]` shape has one tooling consequence:
+`@next/next/no-html-link-for-pages` compiles each `[segment]` to a broad
+wildcard and greedily collapses both segments, so its route pattern then matches
+nearly any internal `<a href>` and misfires on legitimate full-navigation
+anchors (the OAuth-initiating `<a>` on `/settings/calendars`, which must be a
+real navigation, not a prefetching `<Link>`). The rule is a Pages-Router-era
+guard and is turned off in `eslint.config.mjs`; this is the durable reason.
+
+### Resolution and the bounded fetch window
+
+`resolvePublicEventType({ username, slug })` looks the host up by `username` in
+`noclucal_users` (citext, so the match is case-insensitive) and the event type
+up by `(hostUserId, slug)`, gating on `enabled`. Unknown user, unknown slug, and
+disabled event type all collapse to a single `null` so the page renders one
+404 via `notFound()`. The `enabled` gate lives in the resolver, not in
+`getEventTypeBySlug`, so later flows can reuse the slug lookup without the gate.
+The lookup assumes `username` is unique; the column is not yet constrained
+unique (logged as a follow-up).
+
+The page fetches `getAvailableSlots` for `[now, now + min(maxFutureMinutes, 90
+days)]`, capping the horizon a single render asks of the engine and Google
+freebusy (the engine clamps further by `now + minNoticeMinutes`). The UTC `Slot`
+instants are serialized to ISO strings and handed to the client picker.
+
+### Engine UTC, picker timezone
+
+The split decided for `computeSlots` carries through to rendering: the engine
+stays UTC and the invitee timezone is purely a UI concern. The picker detects
+the invitee zone with `Intl` (read through `useSyncExternalStore` so the server
+and first client render agree, avoiding a hydration mismatch without a
+set-state-in-effect), offers a selector over `Intl.supportedValuesOf`, and
+groups the UTC instants into invitee-local days with Luxon. Day-then-time
+selection ends at a summary (`Booking <event> on <weekday>, <date> at <time>
+<tz abbreviation>`).
+
+### Never offer an unverified slot
+
+The outcome policy is the same refusal stance as the orchestration: the page
+never renders times it could not verify against the host's real calendar.
+
+- `externalBusyChecked: false` (the host has no connected calendar): a calm
+  "not available yet" state. The slots were computed from availability and
+  internal bookings only, never checked against Google, so they are not offered.
+- `CalendarUnavailableError` (a connection exists but could not be read): a
+  "temporarily unavailable, please try again" state.
+- success with `externalBusyChecked: true` and zero slots: a "no times are
+  currently available" state.
+- `NotBookableError` (missing or disabled event type): `notFound()`.
+- success, checked, with slots: the picker.
+
+Only the last branch renders the picker. The outcome is resolved as plain data
+inside the `try`/`catch` and the JSX is built afterward, because constructing a
+component inside a `try`/`catch` does not catch its render errors (the linter
+rejects it).
