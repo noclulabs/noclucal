@@ -78,6 +78,8 @@ export interface ConfirmBookingArgs {
 export interface BookingConfirmation {
   eventName: string;
   hostName: string;
+  /** The address the calendar invite went to, named in the confirmation copy. */
+  inviteeEmail: string;
   /** Slot start, ISO UTC instant (rendered in the invitee timezone client-side). */
   startIso: string;
   endIso: string;
@@ -319,6 +321,7 @@ export async function confirmBooking(
     confirmation: {
       eventName: eventType.name,
       hostName,
+      inviteeEmail: email,
       startIso: slot.start.toISOString(),
       endIso: slot.end.toISOString(),
       inviteeTimezone,

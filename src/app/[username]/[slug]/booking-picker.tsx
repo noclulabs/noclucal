@@ -405,7 +405,7 @@ function Confirmation({
         </a>
       ) : null}
       <p className="text-xs text-foreground-muted">
-        A calendar invitation is on its way to your email.
+        A calendar invitation has been sent to {confirmation.inviteeEmail}.
       </p>
     </section>
   );
