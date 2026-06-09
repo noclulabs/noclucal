@@ -55,7 +55,13 @@ export const bookings = pgTable(
       .notNull()
       .default(DEFAULT_BOOKING_STATUS),
 
+    // Google Calendar write-back refs (Phase 4d). Nullable because the booking
+    // is claimed first and the Google event is a best-effort write-back: a
+    // calendar hiccup leaves the booking confirmed with these null rather than
+    // losing the slot. See CALENDAR-PLAYBOOK.md § Booking write flow.
     googleEventId: text("google_event_id"),
+    googleHtmlLink: text("google_html_link"),
+    meetLink: text("meet_link"),
 
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()

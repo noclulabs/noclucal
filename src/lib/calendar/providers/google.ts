@@ -97,6 +97,7 @@ function mapCalendarEvent(ev: calendar_v3.Schema$Event): CalendarEvent {
     description: ev.description ?? undefined,
     start: new Date(start),
     end: new Date(end),
+    htmlLink: ev.htmlLink ?? undefined,
     attendees: (ev.attendees ?? []).map((a) => ({
       email: a.email ?? "",
       displayName: a.displayName ?? undefined,
@@ -248,6 +249,9 @@ export const googleCalendarProvider: CalendarProvider = {
     const res = await calendar.events.insert({
       calendarId: input.calendarId,
       conferenceDataVersion: input.withConference ? 1 : 0,
+      // "all" makes Google deliver its own invite and the Meet link to the
+      // invitee immediately (see CreateEventInput.sendUpdates).
+      sendUpdates: input.sendUpdates,
       requestBody,
     });
     if (!res.data) {

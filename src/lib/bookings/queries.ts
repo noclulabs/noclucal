@@ -85,6 +85,32 @@ export async function createBooking(
   }
 }
 
+/**
+ * Persist the Google Calendar write-back refs on a booking after the event is
+ * created. Scoped by `id` only: the id is a freshly minted uuid for a row this
+ * process just inserted, so there is no cross-host exposure. Best-effort by
+ * design (the caller swallows a Google failure and leaves these null), so the
+ * refs are stored separately from the claim, never in the same write. See
+ * CALENDAR-PLAYBOOK.md § Booking write flow.
+ */
+export async function updateBookingGoogleRefs(
+  bookingId: string,
+  refs: {
+    eventId: string | null;
+    htmlLink: string | null;
+    meetLink: string | null;
+  },
+): Promise<void> {
+  await db
+    .update(schema.bookings)
+    .set({
+      googleEventId: refs.eventId,
+      googleHtmlLink: refs.htmlLink,
+      meetLink: refs.meetLink,
+    })
+    .where(eq(schema.bookings.id, bookingId));
+}
+
 /** All of a host's bookings, earliest start first. Scoped to the host. */
 export async function listBookingsForHost(
   hostUserId: string,

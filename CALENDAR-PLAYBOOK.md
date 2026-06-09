@@ -752,3 +752,95 @@ Only the last branch renders the picker. The outcome is resolved as plain data
 inside the `try`/`catch` and the JSX is built afterward, because constructing a
 component inside a `try`/`catch` does not catch its render errors (the linter
 rejects it).
+
+## Booking write flow (Phase 4d)
+
+Phase 4d is the first flow that writes to both the database and Google in one
+request: the public page completes a booking. The invitee form (name, email,
+optional note) lives in `booking-picker.tsx`; the `confirmBooking` server action
+at `src/app/[username]/[slug]/actions.ts` does the write. The action is
+anonymous (the invitee is not signed in), so there is no `auth()` call; authz is
+by public route resolution, never a client-passed id. Both external calls (the
+re-check's `getAvailableSlots` and the Google write-back `createCalendarEvent`)
+are injected so the integration tests run against the seeded database without
+touching Google.
+
+### The operation order is the contract
+
+The five steps run in this exact order, and the order is the correctness
+argument:
+
+1. **Validate.** The invitee input is re-parsed server-side with Zod (name
+   non-empty, email valid, note bounded, slot instants parse, invitee timezone a
+   valid IANA zone). The client form is convenience; this is the gate.
+2. **Re-resolve.** `resolvePublicEventType({ username, slug })` runs again
+   server-side. Unknown or disabled collapses to a `not_bookable` result. The
+   action never trusts a client-supplied `hostUserId` or `eventTypeId`; it
+   derives both from this lookup.
+3. **Live re-check.** `getAvailableSlots` runs over a narrow window covering the
+   slot, and the action asserts a returned slot has the same start instant. If
+   not, it returns `unavailable`. This catches the slot having gone busy on
+   Google, or having fallen outside availability (or inside min-notice), since
+   the page rendered. The matched slot's own start and end become the
+   authoritative values for the write, so a tampered client end cannot widen the
+   booking.
+4. **Claim the slot.** `createBooking` writes the confirmed row. This is the
+   authoritative moment the slot becomes taken: the `bookings_no_overlap_per_host`
+   exclusion constraint physically refuses a second overlapping confirmed insert,
+   so two invitees racing through step 3 cannot both win. A `23P01` surfaces as
+   `BookingConflictError`, which the action maps to a `conflict` result and
+   creates no Google event.
+5. **Best-effort Google event.** Only after the row exists does the action
+   create the Google Calendar event (with a Meet link and `sendUpdates: "all"`),
+   then `updateBookingGoogleRefs` stores the event id, html link, and Meet link
+   on the row.
+
+### Why claim precedes the Google write
+
+The booking row plus the exclusion constraint is the guarantee; the Google event
+is a write-back on top of it. If Google were written first, a failure there would
+either lose the slot (if we abort) or leave a Google event with no booking row
+(if we proceed), and a slow Google call would widen the window in which a second
+invitee could claim the same time. Claiming first means the slot is reserved the
+instant the constraint accepts the insert, and everything after is decoration on
+an already-correct booking.
+
+A Google failure after the claim is therefore logged and swallowed: the booking
+stays `confirmed` with null Google refs, and the action still returns `success`.
+A calendar hiccup must never lose a slot the invitee legitimately claimed. The
+host can reconcile a ref-less booking later (a backfill is a future nicety); the
+booking itself is whole because its snapshot columns are self-describing.
+
+### The conflict and unavailable paths
+
+`conflict` (a `23P01` at step 4) and `unavailable` (no matching slot at step 3)
+are distinct results the picker renders differently in prose but identically in
+affordance: both show a "choose another time" control that resets the selection
+and calls `router.refresh()` to pull a fresh slot list from the server, so a
+just-taken time disappears. `not_bookable` (the page stopped resolving) and
+`invalid` (Zod rejected the input, with per-field messages) round out the
+discriminated union the action returns.
+
+### The accepted residual external TOCTOU
+
+Steps 3 and 4 close the internal race (two noCluCal invitees) completely: the
+constraint is the floor. They do not close the external race against Google. In
+the window between the step-3 freebusy read and the step-4 insert, the host could
+accept a conflicting event directly in Google; the constraint does not know about
+that event (it guards only noCluCal's own `bookings` table), so the booking still
+lands. This residual external TOCTOU is accepted and minimized by putting the
+re-check immediately before the claim. Closing it entirely would require a
+transactional reservation against Google, which Google's API does not offer. The
+exposure is a host double-book the host can resolve, not an invitee-visible
+broken promise on noCluCal's own slots.
+
+### `sendUpdates: "all"` is the invitee's immediate confirmation
+
+The Google event is created with `sendUpdates: "all"`, so Google emails its own
+calendar invitation (carrying the Meet link) to the invitee the moment the event
+is inserted. That is deliberately the invitee's confirmation channel for now: the
+branded noCluCal confirmation email is Phase 5, and leaning on Google's invite
+means there is never a silent success where the invitee gets nothing. The Meet
+link is also shown in the in-place confirmation when present. There is no rate
+limiting on the public form yet (a follow-up), and reschedule and cancel are
+Phase 6.

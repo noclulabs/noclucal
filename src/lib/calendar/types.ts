@@ -65,6 +65,8 @@ export interface CalendarEvent {
   description?: string;
   start: Date;
   end: Date;
+  /** Provider URL to view the event (Google: `htmlLink`). Undefined if absent. */
+  htmlLink?: string;
   attendees: CalendarAttendee[];
   /** Set when the event has an attached conferencing link. */
   conferenceData?: {
@@ -91,6 +93,13 @@ export interface CreateEventInput {
   timezone: string;
   /** When true, request a conferencing link be created and attached. */
   withConference?: boolean;
+  /**
+   * Who the provider notifies about the new event. `"all"` makes Google deliver
+   * its own calendar invite (and the Meet link) to every attendee immediately,
+   * which is how an invitee gets a confirmation ahead of the Phase 5 branded
+   * emails. Omitted means no provider-side notifications.
+   */
+  sendUpdates?: "all" | "externalOnly" | "none";
 }
 
 /** Input for updating an existing event. Omitted fields are not changed. */
