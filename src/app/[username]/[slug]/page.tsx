@@ -88,7 +88,13 @@ export default async function PublicBookingPage({
           ) : null}
         </header>
         {outcome.kind === "picker" ? (
-          <BookingPicker slots={outcome.slots} eventTypeName={eventType.name} />
+          <BookingPicker
+            slots={outcome.slots}
+            eventTypeName={eventType.name}
+            hostName={hostName}
+            username={username}
+            slug={slug}
+          />
         ) : outcome.kind === "not-ready" ? (
           <StatePanel
             title="This booking page is not available yet"
