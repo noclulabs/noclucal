@@ -35,6 +35,26 @@ COPY drizzle/migrations ./drizzle/migrations
 COPY src/lib/db ./src/lib/db
 CMD ["pnpm", "db:migrate:deploy"]
 
+# ---- worker stage ----
+# Long-lived BullMQ worker image. Carries node_modules (including tsx, a regular
+# dependency) plus the app source and tsconfig.json, and runs src/worker.ts
+# through tsx so `@/` path aliases resolve from tsconfig without a bundling step.
+# Selected explicitly by docker-compose.yml's `worker` service via
+# `target: worker`.
+#
+# IMPORTANT: like `migrator`, this stage must come BEFORE `runner` so that
+# `runner` remains the last (default) target. docker-compose.yml's `web` service
+# does not specify `target:` and would otherwise pick up the last stage.
+FROM node:${NODE_VERSION} AS worker
+WORKDIR /app
+ENV NODE_ENV=production
+RUN corepack enable
+COPY --from=deps /app/node_modules ./node_modules
+COPY package.json pnpm-lock.yaml ./
+COPY tsconfig.json ./
+COPY src ./src
+CMD ["pnpm", "worker"]
+
 # ---- runner stage ----
 FROM node:${NODE_VERSION} AS runner
 WORKDIR /app

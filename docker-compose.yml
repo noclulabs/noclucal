@@ -6,6 +6,42 @@ services:
       - "3002:3000"
     env_file:
       - .env
+    environment:
+      # So later sub-phases can enqueue jobs from the web process. Reaches Redis
+      # on the compose network; the droplet .env does not need REDIS_URL for web.
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  # Redis for BullMQ. Reachable only on the compose network at redis:6379 (no
+  # published host port). noeviction so BullMQ job keys are never evicted,
+  # appendonly so a droplet restart does not lose delayed jobs. Same flags as
+  # the dev Redis in docker-compose.dev.yml.
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--maxmemory-policy", "noeviction", "--appendonly", "yes"]
+    volumes:
+      - noclucal_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # The background worker. Long-lived, runs src/worker.ts via tsx on the
+  # `worker` Dockerfile stage (target set explicitly, like `migrate`). Needs
+  # REDIS_URL in the droplet .env (redis://redis:6379); without it the worker
+  # throws on first use and restart-loops. The web container is unaffected.
+  worker:
+    build:
+      context: .
+      target: worker
+    env_file:
+      - .env
+    depends_on:
+      - redis
     restart: unless-stopped
 
   # One-off migration runner. Invoked from the deploy workflow as
@@ -21,3 +57,7 @@ services:
     profiles:
       - migrate
     restart: "no"
+
+volumes:
+  noclucal_redis_data:
+    name: noclucal_redis_data

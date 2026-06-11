@@ -9,11 +9,11 @@
 - **Domain:** cal.noclulabs.com (subdomain of noclulabs.com for cookie-based SSO)
 - **Repository:** github.com/noclulabs/noclucal
 - **Hosting:** DigitalOcean Droplet (shared with noclulabs.com and portalNetwork; unique host port)
-- **Status:** Phase 4 complete (2026-06-09). End-to-end booking is live: a visitor opens a host's public page at `/[username]/[slug]`, picks a time in their own timezone, and confirms; the slot is claimed under the `bookings_no_overlap_per_host` exclusion constraint, then a best-effort Google event with a Meet link and an invitee invite is created. Shipped: Phase 1 (SSO bridge, `noclucal_users` lazy upsert), Phase 2 (Google Calendar connect / disconnect at `/settings/calendars`, AES-256-GCM token encryption), Phase 3 (booking-core storage, the pure `computeSlots` engine, and the settings app: event types, weekly availability / timezone / date overrides, and the sidebar shell), and Phase 4 (the `bookings` table and its exclusion constraint, `getAvailableSlots`, the public page, the `confirmBooking` write flow, and the 4e closeout: `/` redirects to `/settings`, each event type carries a copyable public booking link, and `username` is now unique). The optional Phase 3 live slot preview remains; Phase 5 (Resend emails) and Phase 6 (reschedule / cancel) are next. Per-phase detail lives in ROADMAP.md and CHANGELOG.md; booking-core design rationale lives in `CALENDAR-PLAYBOOK.md`.
+- **Status:** Phase 4 complete (2026-06-09); Phase 5a (Redis / BullMQ substrate) shipped, tested with no real jobs yet. End-to-end booking is live: a visitor picks a time on a host's public `/[username]/[slug]` page and confirms; the slot is claimed under the `bookings_no_overlap_per_host` exclusion constraint, then a best-effort Google event with a Meet link and an invitee invite is created. Phases 1 to 4 shipped the SSO bridge and `noclucal_users` lazy upsert, Google connect / disconnect with AES-256-GCM token encryption, the booking core (`computeSlots` plus the settings app), and the public booking write flow plus 4e closeout (`/` redirects to `/settings`, copyable per-event-type links, unique `username`). Phase 5 (Resend emails) and Phase 6 (reschedule / cancel) follow; the optional Phase 3 live slot preview remains. Detail lives in ROADMAP.md and CHANGELOG.md; booking-core rationale in `CALENDAR-PLAYBOOK.md`.
 
 ## Bible files (canonical set)
 
-Four files are the continuity mechanism across architect sessions. Every architect prompt reads them at ramp-up; every PR updates the ones it affects. The set is intentionally small. More files mean faster drift.
+Four files are the continuity mechanism across architect sessions: every prompt reads them at ramp-up and every PR updates the ones it affects. The set is intentionally small; more files mean faster drift.
 
 | File | When updated | Owns |
 |------|-------------|------|
@@ -24,31 +24,11 @@ Four files are the continuity mechanism across architect sessions. Every archite
 
 ### Reference layer (not bible files)
 
-`CALENDAR-PLAYBOOK.md` is a read-on-demand reference, not a bible file. It holds
-the deep per-feature design rationale (calendar internals, slot computation,
-event types, availability) that does not need to be in the always-loaded
-CLAUDE.md. The rule that keeps CLAUDE.md bounded as the project grows:
+`CALENDAR-PLAYBOOK.md` is a read-on-demand reference, not a bible file: it holds the deep per-feature booking-core rationale (calendar internals, slot computation, event types, availability) that need not sit in the always-loaded CLAUDE.md. The rule that keeps CLAUDE.md bounded: it keeps current state, active conventions, and gotchas that bite the next session, summarizing a shipped phase's deep rationale to a few lines plus a pointer into the playbook (append-mostly, so its growth costs nothing per session and creates no sync drift). Split reference files by durable domain, not by phase (add e.g. `AUTH-PLAYBOOK.md` only when a domain outgrows a lean summary; one-file-per-phase causes drift). The bible set stays the four files above; adding the playbook does not grow it.
 
-- **CLAUDE.md keeps current state, active conventions, and gotchas that will
-  bite the next session.** When a phase ships, its deep rationale is summarized
-  to a few lines here plus a pointer into the playbook.
-- **The playbook absorbs the rationale.** It is append-mostly and read on
-  demand, so its growth costs nothing per session and does not create sync
-  drift (nobody re-edits last quarter's rationale).
-- **Split reference files by durable domain, not by phase.** One playbook now
-  (`CALENDAR-PLAYBOOK.md`); add another (e.g. `AUTH-PLAYBOOK.md`) only when a
-  domain's rationale actually outgrows a lean summary. One-file-per-phase is the
-  path that causes drift, so do not take it.
+### Ramp-up and per-PR rules
 
-The bible set stays the four files above. Adding the playbook does not grow it.
-
-### Ramp-up rule for every Claude Code prompt
-
-Every architect-generated executor prompt MUST include all four files in its ramp-up file list. If a prompt omits any of the four, it is a defect; the architect notes it and corrects.
-
-### Per-PR update rule
-
-Every PR's done-definition includes a "Bible file updates (REQUIRED)" section. That section lists the bibles being modified by the PR with the specific edits called out. PRs that legitimately touch no bibles (extremely rare; pure refactoring with no observable behavior change) explicitly note "no bible changes" with the reason.
+Every architect-generated executor prompt MUST list all four bible files in its ramp-up reads; omitting one is a defect the architect corrects. Every PR's done-definition includes a "Bible file updates (REQUIRED)" section listing the bibles it modifies with the specific edits, or explicitly notes "no bible changes" with the reason (rare; pure refactors with no observable behavior change only).
 
 ## Tech Stack
 
@@ -57,7 +37,7 @@ Every PR's done-definition includes a "Bible file updates (REQUIRED)" section. T
 - **Styling:** Tailwind CSS v4
 - **Font:** Space Grotesk (inherited from noclulabs design system, via `next/font/google`)
 - **Database:** PostgreSQL 18 via Drizzle ORM with the `pg` driver
-- **Caching and queues:** Redis with BullMQ for rate limiting and background jobs (confirmation email, reminders, OAuth token refresh, webhook processing)
+- **Caching and queues:** Redis with BullMQ for rate limiting and background jobs (confirmation email, reminders, OAuth token refresh, webhook processing). Deployed substrate as of Phase 5a; no real jobs wired yet
 - **Auth:** Auth.js v5 (`next-auth@beta`) in SSO relying-party mode (see § Identity bridge)
 - **Time and timezones:** Luxon (IANA tz support, RRULE helpers; chosen over date-fns-tz for the recurrence story)
 - **Email:** Resend with React Email templates
@@ -98,11 +78,9 @@ noCluCal is a relying party to noclulabs.com's identity. Mechanics:
 
 ## File Structure
 
-A top-level orientation map, not an exhaustive listing. The repo is the source
-of truth for the full file list: run `git ls-files` for the always-current set.
-A PR updates this map only when it adds a new top-level area, never for every
-new file (the principle the Schema section applies to column structure: the
-source files own the detail).
+A top-level orientation map, not an exhaustive listing; run `git ls-files` for
+the always-current full set. A PR updates this map only when it adds a new
+top-level area, never for every new file (the source files own the detail).
 
 - **`src/lib/`** is the domain core, one subdirectory per area:
   - `db/` Drizzle schema (one file per table), lazy pool / client, schema barrel.
@@ -113,6 +91,8 @@ source files own the detail).
   - `booking/` the `getAvailableSlots` orchestration over `computeSlots`, plus public-route resolution (`resolve.ts`).
   - `bookings/` confirmed-booking records, constants, data-access.
   - `auth/` the lazy `noclucal_users` upsert; plus top-level helpers (`app-url.ts`, `version.ts`).
+  - `queue/` (Phase 5a) the lazy Redis connection, BullMQ queue constants and the producer handle, and the worker scaffold.
+- **`src/worker.ts`** the BullMQ worker process entry, run via tsx in the `worker` container (see § Queue and worker).
 - **`src/app/`** the App Router tree: root layout / page / `globals.css`, `me/`, `api/` (Auth.js handler, Google OAuth connect / callback), `settings/` (the shell `layout.tsx`, `settings-nav.tsx`, the `/settings` overview, and the event-types, availability, calendars, and bookings-placeholder sections, each a page plus server `actions.ts`), and the public booking page at `[username]/[slug]/` (the dynamic, anonymous `page.tsx` plus the `booking-picker.tsx` client component, outside the auth matcher).
 - **`src/auth.ts`, `src/auth.config.ts`, `src/proxy.ts`** the Auth.js relying-party wiring: server, edge-safe, route-protecting proxy (see § Auth).
 - **`tests/`** mirrors `src/` (Vitest), plus `setup.ts` and top-level `smoke.test.ts`.
@@ -121,21 +101,27 @@ source files own the detail).
 - **Root** the build and tooling config (`package.json`, `tsconfig.json`, `next.config.ts`, `drizzle.config.ts`, `vitest.config.ts`, ESLint / PostCSS config, `Dockerfile` and Compose files, `.env.example`).
 - **Bible set:** CLAUDE.md, README.md, ROADMAP.md, CHANGELOG.md. **Reference layer:** CALENDAR-PLAYBOOK.md (read-on-demand booking-core rationale).
 
-Per-phase file and dependency history (`luxon` in 3b, `zod` in 3c) lives in CHANGELOG.md and ROADMAP.md, not here.
+Per-phase file and dependency history lives in CHANGELOG.md and ROADMAP.md, not here.
 
 ## Deployment
 
-- Live at https://cal.noclulabs.com with the placeholder homepage.
-- Host port 3002 confirmed in use (portalNetwork = 3000, noclulabs = 3001, noCluCal = 3002).
-- Caddy block for `cal.noclulabs.com` is live on the droplet, terminating TLS and proxying to `127.0.0.1:3002`.
-- First manual deploy ops (clone to `/opt/noclucal`, create `.env`, add Caddy block) happened on 2026-05-26 alongside this PR.
-- As of Phase 1c, `deploy.yml` runs `git pull` → `docker compose --profile migrate run --rm --build migrate` → `docker compose up -d --build` → `docker image prune -f`. Migrations apply against `noclucal_prod` before the new web container starts.
+- Live at https://cal.noclulabs.com on host port 3002 (portalNetwork = 3000, noclulabs = 3001, noCluCal = 3002); Caddy terminates TLS for `cal.noclulabs.com` and proxies to `127.0.0.1:3002`. Cloned to `/opt/noclucal` with its own `.env` (first manual ops 2026-05-26).
+- As of Phase 1c, `deploy.yml` runs `git pull` → `docker compose --profile migrate run --rm --build migrate` → `docker compose up -d --build` (which now also brings up the `redis` and `worker` services) → `docker image prune -f`. Migrations apply against `noclucal_prod` before the new web container starts.
 
 ### Dockerfile stage ordering
 
-The Dockerfile defines four stages in this order: `deps` → `build` → `migrator` → `runner`. The order is load-bearing: `docker-compose.yml`'s `web` service does NOT specify a `target:` directive, so Docker builds the LAST stage by default. `runner` must remain last for `web` to build the Next.js runtime image. The `migrate` Compose service uses `target: migrator` explicitly, so it is unaffected by where `migrator` sits in the file as long as it exists.
+The Dockerfile defines five stages in this order: `deps` → `build` → `migrator` → `worker` → `runner`. The order is load-bearing: `docker-compose.yml`'s `web` service does NOT specify a `target:` directive, so Docker builds the LAST stage by default. `runner` must remain last for `web` to build the Next.js runtime image. The `migrate` and `worker` Compose services use `target: migrator` / `target: worker` explicitly, so they are unaffected by where those stages sit in the file as long as they exist.
 
 Phase 1c shipped with `migrator` as the last stage and production restart-looped on the migrator's CMD until this was caught and fixed.
+
+### Queue and worker
+
+Redis and BullMQ are deployed substrate as of Phase 5a, tested but with no real jobs yet (a trivial `health` job proves the round trip). Modules live in `src/lib/queue/`; `src/worker.ts` is the worker process entry.
+
+- **Lazy, side-effect-free connection** (`connection.ts`), like `src/lib/db/index.ts`: nothing connects at import and a missing `REDIS_URL` throws on first use. The Worker takes its own connection (blocking commands monopolize one), the producer memoizes a shared one, and all set `maxRetriesPerRequest: null` (BullMQ Workers require it).
+- **`noclucal` key prefix** on every queue, isolating keys if Redis is ever shared.
+- **`--maxmemory-policy noeviction` and `--appendonly yes`, in dev and prod**: BullMQ keeps jobs as ordinary keys (eviction would silently drop them) and appendonly survives a restart.
+- **Worker as its own compose service via tsx**, on the `worker` Dockerfile stage (see above), so `@/` resolves from `tsconfig.json` unbundled. It needs `REDIS_URL` in the droplet `.env` (`redis://redis:6379`) or it throws on first use and restart-loops; the web container is unaffected.
 
 ## Conventions
 
@@ -259,14 +245,10 @@ implement in addition to the base `CalendarProvider`.
 `calendar_connections` is the storage table for OAuth-connected calendars.
 Schema lives at `src/lib/db/schema/calendar-connections.ts`. One row per
 (user, provider) for the MVP, enforced by a unique index. Disconnect is a
-hard DELETE; there is no soft-delete column.
-
-Access and refresh tokens are stored as ciphertext strings in the format
-`v1:base64nonce:base64ciphertext`. The `v1:` prefix is a version marker so
-we can rotate the encryption key without a schema change (a future `v2:`
-prefix will indicate ciphertext produced by the next key). Encryption
-helpers ship in Phase 2b; Phase 2a's schema accepts the columns as plain
-text with no crypto applied.
+hard DELETE; there is no soft-delete column. Access and refresh tokens are
+stored as ciphertext (`v1:base64nonce:base64ciphertext`; the `v1:` prefix
+versions the key so it rotates without a schema change), see § Token
+encryption below.
 
 ### Token encryption (summary)
 
@@ -445,4 +427,4 @@ nav order is Overview, Event types, Availability, Calendars, Bookings.
 
 ## Known minor issues
 
-- **Caddy access log block removed during Phase 1a ops.** The `log {}` block for `cal.noclulabs.com` was stripped from `/etc/caddy/Caddyfile` because `/var/log/caddy/` is not writable by the Caddy user on the droplet. Re-enable by pre-creating the log file with `caddy:caddy` ownership before adding the `log {}` block back. Not blocking; access logs are nice-to-have.
+- **Caddy access log block removed during Phase 1a ops.** The `log {}` block for `cal.noclulabs.com` was stripped from `/etc/caddy/Caddyfile` because `/var/log/caddy/` is not writable by the Caddy user. Re-enable by pre-creating the log file with `caddy:caddy` ownership first. Not blocking; access logs are nice-to-have.
