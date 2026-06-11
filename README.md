@@ -85,7 +85,7 @@ Redis backs BullMQ (background jobs, rate limiting). The dev `docker compose -f 
 pnpm redis:smoke
 ```
 
-should print a successful `PING` and a set/get/del round trip. Run the worker with `pnpm worker`; it logs "notifications worker ready" and shuts down cleanly on Ctrl-C. See `CLAUDE.md` § Queue and worker for the design.
+should print a successful `PING` and a set/get/del round trip. Run the worker with `pnpm worker`; it logs "notifications worker ready" and shuts down cleanly on Ctrl-C. See `INFRA-PLAYBOOK.md` for the queue and worker design.
 
 ### Migrations
 
@@ -117,7 +117,7 @@ This project uses four bible files as the sole continuity mechanism across Claud
 | `README.md` | Setup instructions, project overview |
 | `ROADMAP.md` | Planned work, version targets, future ideas |
 
-A separate `CALENDAR-PLAYBOOK.md` is a read-on-demand reference layer, not a bible file. It holds the deep per-feature design rationale for the booking core (calendar internals, slot computation, event types, availability) so CLAUDE.md stays under its context budget. Reference files are split by durable domain, never by phase; the bible set stays at four.
+Two read-on-demand reference layers sit beside the bibles, split by durable domain: `CALENDAR-PLAYBOOK.md` holds the deep design rationale for the booking core (calendar internals, slot computation, event types, availability), and `INFRA-PLAYBOOK.md` holds the infrastructure and operations rationale (Docker, compose, Redis and BullMQ, the worker, deploy, the droplet environment, dependency coupling). Neither is a bible file; they keep CLAUDE.md under its context budget. Reference files are split by durable domain, never by phase; the bible set stays at four.
 
 ## License
 
