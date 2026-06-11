@@ -57,23 +57,35 @@ pnpm db:smoke     # Run a connectivity check against DATABASE_URL (SELECT versio
 pnpm db:generate  # Generate a new migration from schema diffs
 pnpm db:migrate   # Apply pending migrations to DATABASE_URL
 pnpm db:studio    # Open Drizzle Studio against DATABASE_URL
+pnpm redis:smoke  # Run a connectivity check against REDIS_URL (PING + set/get/del round trip)
+pnpm worker       # Run the BullMQ notifications worker (Ctrl-C for a graceful shutdown)
 ```
 
 ### Local database
 
-PostgreSQL 18 runs locally via Docker. Spin it up before running `pnpm db:smoke` (and, once Phase 1c lands, `pnpm db:migrate` and `pnpm db:studio`):
+PostgreSQL 18 and Redis 7 run locally via Docker. One command spins up both:
 
 ```bash
 docker compose -f docker-compose.dev.yml up -d
 ```
 
-Connection string defaults match `.env.local` (host port 5434, user `noclucal`, database `noclucal_dev`). Port 5434 is deliberate; noclulabs' dev Postgres holds 5433, so both can run on the same Mac without clashing. After spinning up:
+Connection string defaults match `.env.local` (Postgres on host port 5434, user `noclucal`, database `noclucal_dev`). Port 5434 is deliberate; noclulabs' dev Postgres holds 5433, so both can run on the same Mac without clashing. After spinning up:
 
 ```bash
 pnpm db:smoke
 ```
 
 should print three successful queries and exit 0. See `CLAUDE.md` § Database for the full architectural decisions (connection module, SSL workaround, two-URL pattern).
+
+### Local Redis
+
+Redis backs BullMQ (background jobs, rate limiting). The dev `docker compose -f docker-compose.dev.yml up -d` above already starts it on host port 6380 (deliberate; the default 6379 is left free), with `noeviction` and `appendonly` set so BullMQ keys are never evicted and delayed jobs survive a restart. Set `REDIS_URL=redis://localhost:6380` in `.env.local` (it ships in `.env.example`), then:
+
+```bash
+pnpm redis:smoke
+```
+
+should print a successful `PING` and a set/get/del round trip. Run the worker with `pnpm worker`; it logs "notifications worker ready" and shuts down cleanly on Ctrl-C. See `CLAUDE.md` § Queue and worker for the design.
 
 ### Migrations
 

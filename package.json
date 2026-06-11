@@ -12,6 +12,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "db:smoke": "node --env-file=.env.local --import tsx scripts/db-smoke-test.ts",
+    "redis:smoke": "node --env-file=.env.local --import tsx scripts/redis-smoke-test.ts",
+    "worker": "node --env-file-if-exists=.env.local --import tsx src/worker.ts",
     "db:generate": "node --env-file=.env.local --import tsx node_modules/drizzle-kit/bin.cjs generate",
     "db:migrate": "node --env-file=.env.local --import tsx node_modules/drizzle-kit/bin.cjs migrate",
     "db:migrate:deploy": "node --import tsx node_modules/drizzle-kit/bin.cjs migrate",
@@ -19,14 +21,17 @@
     "db:test:setup": "node --import tsx scripts/db-test-setup.ts"
   },
   "dependencies": {
+    "bullmq": "5.78.0",
     "drizzle-orm": "^0.45.2",
     "googleapis": "^173.0.0",
+    "ioredis": "5.10.1",
     "luxon": "3.7.2",
     "next": "16.2.4",
     "next-auth": "5.0.0-beta.31",
     "pg": "^8.20.0",
     "react": "19.2.4",
     "react-dom": "19.2.4",
+    "tsx": "4.22.3",
     "zod": "^4.4.3"
   },
   "devDependencies": {
@@ -44,7 +49,6 @@
     "eslint-config-next": "16.2.4",
     "jsdom": "^29.1.1",
     "tailwindcss": "^4",
-    "tsx": "^4.21.0",
     "typescript": "^5",
     "vitest": "^4.1.5"
   }

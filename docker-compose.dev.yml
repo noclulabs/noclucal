@@ -26,6 +26,28 @@ services:
       timeout: 5s
       retries: 5
 
+  # Local Redis for BullMQ. Host port 6380 is deliberate (the default 6379 is
+  # left free), the same anti-clash practice as the dev Postgres on 5434.
+  # noeviction so BullMQ job keys are never dropped, appendonly so a restart
+  # does not lose delayed jobs. Host-run dev processes connect to
+  # redis://localhost:6380.
+  redis:
+    image: redis:7.4-alpine
+    container_name: noclucal-redis-dev
+    restart: unless-stopped
+    command: ["redis-server", "--maxmemory-policy", "noeviction", "--appendonly", "yes"]
+    ports:
+      - "6380:6379"
+    volumes:
+      - noclucal_redis_dev_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
 volumes:
   noclucal_postgres_dev_data:
     name: noclucal_postgres_dev_data
+  noclucal_redis_dev_data:
+    name: noclucal_redis_dev_data
