@@ -9,7 +9,7 @@
 - **Domain:** cal.noclulabs.com (subdomain of noclulabs.com for cookie-based SSO)
 - **Repository:** github.com/noclulabs/noclucal
 - **Hosting:** DigitalOcean Droplet (shared with noclulabs.com and portalNetwork; unique host port)
-- **Status:** Phase 4 complete (2026-06-09); Phase 5a (Redis / BullMQ substrate) shipped, tested with no real jobs yet. End-to-end booking is live: a visitor picks a time on a host's public `/[username]/[slug]` page and confirms; the slot is claimed under the `bookings_no_overlap_per_host` exclusion constraint, then a best-effort Google event with a Meet link and an invitee invite is created. Phases 1 to 4 shipped the SSO bridge and `noclucal_users` lazy upsert, Google connect / disconnect with AES-256-GCM token encryption, the booking core (`computeSlots` plus the settings app), and the public booking write flow plus 4e closeout (`/` redirects to `/settings`, copyable per-event-type links, unique `username`). Phase 5 (Resend emails) and Phase 6 (reschedule / cancel) follow; the optional Phase 3 live slot preview remains. Detail lives in ROADMAP.md and CHANGELOG.md; booking-core rationale in `CALENDAR-PLAYBOOK.md`.
+- **Status:** Phase 4 complete (2026-06-09); Phase 5a (Redis / BullMQ substrate) shipped, tested with no real jobs yet. End-to-end booking is live: a visitor picks a time on a host's public `/[username]/[slug]` page and confirms; the slot is claimed under the `bookings_no_overlap_per_host` exclusion constraint, then a best-effort Google event with a Meet link and an invitee invite is created. Phase 5 (Resend emails) and Phase 6 (reschedule / cancel) follow; the optional Phase 3 live slot preview remains. Detail lives in ROADMAP.md and CHANGELOG.md; booking-core rationale in `CALENDAR-PLAYBOOK.md`; infrastructure and operations rationale in `INFRA-PLAYBOOK.md`.
 
 ## Bible files (canonical set)
 
@@ -24,7 +24,7 @@ Four files are the continuity mechanism across architect sessions: every prompt 
 
 ### Reference layer (not bible files)
 
-`CALENDAR-PLAYBOOK.md` is a read-on-demand reference, not a bible file: it holds the deep per-feature booking-core rationale (calendar internals, slot computation, event types, availability) that need not sit in the always-loaded CLAUDE.md. The rule that keeps CLAUDE.md bounded: it keeps current state, active conventions, and gotchas that bite the next session, summarizing a shipped phase's deep rationale to a few lines plus a pointer into the playbook (append-mostly, so its growth costs nothing per session and creates no sync drift). Split reference files by durable domain, not by phase (add e.g. `AUTH-PLAYBOOK.md` only when a domain outgrows a lean summary; one-file-per-phase causes drift). The bible set stays the four files above; adding the playbook does not grow it.
+Two read-on-demand reference files sit beside the bibles, split by durable domain: `CALENDAR-PLAYBOOK.md` holds the deep booking-core rationale (calendar internals, slot computation, event types, availability) and is read at ramp-up only for booking-core PRs; `INFRA-PLAYBOOK.md` holds the deep infrastructure and operations rationale (Docker, compose, Redis and BullMQ, the worker, deploy, CI, the droplet env, dependency coupling) and is read only for infrastructure, deployment, and operations PRs. The rule that keeps CLAUDE.md bounded: it keeps current state, active conventions, and gotchas that bite the next session, summarizing deep rationale to a few lines plus a pointer into the right playbook (append-mostly, so growth costs nothing per session and creates no sync drift). Split reference files by durable domain, not by phase, adding a new one only when a domain outgrows a lean summary (one-file-per-phase causes drift). The bible set stays the four files above; the playbooks do not grow it.
 
 ### Ramp-up and per-PR rules
 
@@ -48,7 +48,7 @@ Every architect-generated executor prompt MUST list all four bible files in its 
 - **Testing:** Vitest (unit + integration). Playwright is reserved for E2E if and when needed.
 - **CI:** GitHub Actions
 - **CD:** GitHub Actions auto-deploys on every merge to `main`
-- **Deployment:** Docker on a DigitalOcean Droplet behind a Caddy reverse proxy (Caddy terminates TLS for `cal.noclulabs.com` and proxies to the `web` container)
+- **Deployment:** Docker on a DigitalOcean Droplet behind a Caddy reverse proxy
 
 ## Brand System
 
@@ -74,7 +74,7 @@ noCluCal is a relying party to noclulabs.com's identity. Mechanics:
 - **No providers in noCluCal.** noCluCal does NOT run Credentials, OAuth, or any sign-in flow of its own. The Auth.js providers array is empty. All authentication happens at noclulabs.com/signin.
 - **Sign-in redirect.** When an unauthenticated visitor hits a protected page on cal.noclulabs.com, the proxy redirects to `https://noclulabs.com/signin?redirect=https://cal.noclulabs.com/<original-path>` (URL-encoded). noclulabs.com's existing same-origin redirect sanitizer was extended in noclulabs PR #143 to allow `cal.noclulabs.com` (and future suite domains) as trusted targets. Cookie domain was also widened to `.noclulabs.com` at that time.
 - **No DB writes to noclulabs.** noCluCal NEVER writes to noclulabs' users table. References to users are by external user ID only, stored in noCluCal's own `noclucal_users` shadow table (a lightweight projection: user_id PK plus cached `username` / `display_name` for joins, updated lazily on first observation of each user).
-- **Session revocation deferred.** noclulabs.com revokes sessions on password change via the `signedInAt < password_changed_at` check in its DB-capable session callback. noCluCal does NOT replicate that check at Phase 1, because doing so would require either a DB lookup against noclulabs (architectural violation) or an HTTP round-trip per page render (latency tax). Trade-off: a revoked noclulabs session remains valid in noCluCal until the JWT naturally expires (Auth.js default 30 days). Logged as a deferred item in ROADMAP. Options for closing the gap when there are real users: (a) noclulabs exposes a `/api/auth/validate-session` endpoint that noCluCal pings on session resolution, with caching to amortize cost; (b) promote noclulabs.com to a proper OIDC provider with token introspection.
+- **Session revocation deferred.** noclulabs revokes sessions on password change via its `signedInAt < password_changed_at` check; noCluCal does not replicate it (that would need a DB lookup against noclulabs or an HTTP round-trip per render), so a revoked noclulabs session stays valid here until the JWT expires (Auth.js default 30 days). The options for closing the gap are logged in ROADMAP § Deferred items.
 
 ## File Structure
 
@@ -92,36 +92,27 @@ top-level area, never for every new file (the source files own the detail).
   - `bookings/` confirmed-booking records, constants, data-access.
   - `auth/` the lazy `noclucal_users` upsert; plus top-level helpers (`app-url.ts`, `version.ts`).
   - `queue/` (Phase 5a) the lazy Redis connection, BullMQ queue constants and the producer handle, and the worker scaffold.
-- **`src/worker.ts`** the BullMQ worker process entry, run via tsx in the `worker` container (see § Queue and worker).
+- **`src/worker.ts`** the BullMQ worker process entry, run via tsx in the `worker` container (see § Infrastructure and deployment).
 - **`src/app/`** the App Router tree: root layout / page / `globals.css`, `me/`, `api/` (Auth.js handler, Google OAuth connect / callback), `settings/` (the shell `layout.tsx`, `settings-nav.tsx`, the `/settings` overview, and the event-types, availability, calendars, and bookings-placeholder sections, each a page plus server `actions.ts`), and the public booking page at `[username]/[slug]/` (the dynamic, anonymous `page.tsx` plus the `booking-picker.tsx` client component, outside the auth matcher).
 - **`src/auth.ts`, `src/auth.config.ts`, `src/proxy.ts`** the Auth.js relying-party wiring: server, edge-safe, route-protecting proxy (see § Auth).
 - **`tests/`** mirrors `src/` (Vitest), plus `setup.ts` and top-level `smoke.test.ts`.
 - **`drizzle/migrations/`** the numbered SQL migrations and Drizzle's `meta/` journal.
 - **`scripts/`** DB smoke-test and CI test-setup; **`public/`** static assets; **`.github/workflows/`** CI and deploy pipelines.
 - **Root** the build and tooling config (`package.json`, `tsconfig.json`, `next.config.ts`, `drizzle.config.ts`, `vitest.config.ts`, ESLint / PostCSS config, `Dockerfile` and Compose files, `.env.example`).
-- **Bible set:** CLAUDE.md, README.md, ROADMAP.md, CHANGELOG.md. **Reference layer:** CALENDAR-PLAYBOOK.md (read-on-demand booking-core rationale).
+- **Bible set:** CLAUDE.md, README.md, ROADMAP.md, CHANGELOG.md. **Reference layer:** CALENDAR-PLAYBOOK.md (read-on-demand booking-core rationale) and INFRA-PLAYBOOK.md (read-on-demand infrastructure and operations rationale).
 
 Per-phase file and dependency history lives in CHANGELOG.md and ROADMAP.md, not here.
 
-## Deployment
+## Infrastructure and deployment
 
-- Live at https://cal.noclulabs.com on host port 3002 (portalNetwork = 3000, noclulabs = 3001, noCluCal = 3002); Caddy terminates TLS for `cal.noclulabs.com` and proxies to `127.0.0.1:3002`. Cloned to `/opt/noclucal` with its own `.env` (first manual ops 2026-05-26).
-- As of Phase 1c, `deploy.yml` runs `git pull` → `docker compose --profile migrate run --rm --build migrate` → `docker compose up -d --build` (which now also brings up the `redis` and `worker` services) → `docker image prune -f`. Migrations apply against `noclucal_prod` before the new web container starts.
+Live at https://cal.noclulabs.com (host port 3002 behind Caddy; portalNetwork holds 3000, noclulabs 3001), cloned to `/opt/noclucal` with its own `.env`. One terse line per invariant below; the rationale, the failure history, and the dependency-coupling rule live in `INFRA-PLAYBOOK.md`, read at ramp-up for infrastructure, deployment, and operations PRs.
 
-### Dockerfile stage ordering
-
-The Dockerfile defines five stages in this order: `deps` → `build` → `migrator` → `worker` → `runner`. The order is load-bearing: `docker-compose.yml`'s `web` service does NOT specify a `target:` directive, so Docker builds the LAST stage by default. `runner` must remain last for `web` to build the Next.js runtime image. The `migrate` and `worker` Compose services use `target: migrator` / `target: worker` explicitly, so they are unaffected by where those stages sit in the file as long as they exist.
-
-Phase 1c shipped with `migrator` as the last stage and production restart-looped on the migrator's CMD until this was caught and fixed.
-
-### Queue and worker
-
-Redis and BullMQ are deployed substrate as of Phase 5a, tested but with no real jobs yet (a trivial `health` job proves the round trip). Modules live in `src/lib/queue/`; `src/worker.ts` is the worker process entry.
-
-- **Lazy, side-effect-free connection** (`connection.ts`), like `src/lib/db/index.ts`: nothing connects at import and a missing `REDIS_URL` throws on first use. The Worker takes its own connection (blocking commands monopolize one), the producer memoizes a shared one, and all set `maxRetriesPerRequest: null` (BullMQ Workers require it).
-- **`noclucal` key prefix** on every queue, isolating keys if Redis is ever shared.
-- **`--maxmemory-policy noeviction` and `--appendonly yes`, in dev and prod**: BullMQ keeps jobs as ordinary keys (eviction would silently drop them) and appendonly survives a restart.
-- **Worker as its own compose service via tsx**, on the `worker` Dockerfile stage (see above), so `@/` resolves from `tsconfig.json` unbundled. It needs `REDIS_URL` in the droplet `.env` (`redis://redis:6379`) or it throws on first use and restart-loops; the web container is unaffected.
+- `runner` stays the last Dockerfile stage (`deps`, `build`, `migrator`, `worker`, `runner`): the `web` compose service sets no `target:`, so Docker builds the last stage.
+- Redis runs `--maxmemory-policy noeviction` and `--appendonly yes` in dev and prod; every BullMQ key is prefixed `noclucal`.
+- The queue connection module is lazy and side-effect-free like the DB module, with `maxRetriesPerRequest: null` on every connection, and the Worker takes its own connection while producers share a memoized one.
+- The worker is its own compose service running `src/worker.ts` via tsx (`@/` resolves from `tsconfig.json` unbundled) with graceful SIGTERM / SIGINT shutdown.
+- The droplet `/opt/noclucal/.env` holds config and secrets, each new key added before or with the deploy that needs it (`TOKEN_ENCRYPTION_KEY`, `REDIS_URL`; `RESEND_API_KEY` next in 5b/5c).
+- Deploy is `deploy.yml` on merge to `main`: `git pull`, the `migrate` Compose profile, `docker compose up -d --build`, prune.
 
 ## Conventions
 
@@ -140,7 +131,7 @@ Redis and BullMQ are deployed substrate as of Phase 5a, tested but with no real 
 
 ### Dependencies
 
-- **Pinning.** Shared dependencies (for example `zod`, `next-auth`, `drizzle-orm`) match noclulabs' pin style for cross-suite consistency; noClu-specific dependencies (for example `luxon`, `googleapis`) pin exact. Either way the lockfile (`pnpm-lock.yaml`) is authoritative for reproducible installs.
+- **Pinning.** Shared dependencies (for example `zod`, `next-auth`, `drizzle-orm`) match noclulabs' pin style for cross-suite consistency; noClu-specific dependencies (for example `luxon`, `googleapis`) pin exact. Either way the lockfile (`pnpm-lock.yaml`) is authoritative for reproducible installs. When bumping `bullmq`, realign the `ioredis` pin to the version `bullmq` resolves (`INFRA-PLAYBOOK.md` § Dependency coupling).
 
 ### Writing Style
 
@@ -169,15 +160,13 @@ Every Claude Code session must end by updating the relevant bible files:
 
 ## Database
 
-Database wiring landed in Phase 1b; first schema and first migration landed in Phase 1c.
-
-- **Cluster.** Same DigitalOcean Managed Postgres cluster as noclulabs (`noclulabs-postgres-prod`, Basic tier, PostgreSQL 18, SFO2, in the noCluHub VPC). Adding a database to the existing cluster is a no-op for billing and operationally simpler than a second cluster.
-- **Databases.** `noclucal_dev` (local Mac via `docker-compose.dev.yml`, host port 5434 to avoid clashing with noclulabs' 5433), `noclucal_test` (CI service container, ephemeral), `noclucal_prod` (DO managed cluster, provisioned 2026-05-26). Separate databases (not schemas) for engine-enforced isolation.
-- **Connection module.** `src/lib/db/index.ts` exports `pool`, `db`, `closeDb()`, and re-exports `schema`. Lazy initialization via a Proxy: importing the module has zero side effects; the `Pool` and Drizzle client are constructed on first property access. An error is thrown at that point if `DATABASE_URL` is unset. This is load-bearing because Next.js's build-time page-data collection loads route modules that transitively import the DB without `DATABASE_URL` being set; eager init at import time would crash the build. Pool config: max 10 connections, 30s idle timeout, 5s connection timeout. Mirrors noclulabs' Phase 3a pattern exactly.
-- **Drizzle instance with schema.** As of Phase 1c, `db = drizzle(getPool(), { schema })`, so `db.query.noclucalUsers` is typed. New tables added to `src/lib/db/schema/` show up automatically once their file is exported from `schema/index.ts`.
-- **Smoke test.** `pnpm db:smoke` runs `scripts/db-smoke-test.ts`, which fires `SELECT version()`, `SELECT 1`, and `SELECT NOW()` against the pool. Permanent diagnostic infrastructure; answers "is the database reachable right now?" without depending on any schema. Mirrors noclulabs' equivalent.
-- **SSL workaround (critical).** Every `DATABASE_URL` used by node-pg / drizzle-orm / drizzle-kit MUST end with `&uselibpqcompat=true`. Same reason as noclulabs: DO's self-signed cert plus node-pg's `pg-connection-string` library treating `sslmode=require` as `verify-full`. `psql` does NOT need the suffix (libpq honors `sslmode=require` correctly out of the box). Local dev does not need the suffix either (no SSL on the local Postgres). The SSL workaround is identical to noclulabs' implementation; the droplet ops command pattern for stripping the suffix when shelling into psql lives in noclulabs' CLAUDE.md § Database / Production and applies here verbatim.
-- **Two-URL pattern.** Public URL (Mac ops, Trusted Sources lists the developer's Mac IP) and VPC URL (droplet runtime, never leaves the VPC), both stored in Bitwarden under the noClu Infrastructure folder.
+- **Cluster.** Same DigitalOcean Managed Postgres cluster as noclulabs (`noclulabs-postgres-prod`, Basic tier, PostgreSQL 18, SFO2, in the noCluHub VPC).
+- **Databases.** `noclucal_dev` (local Mac via `docker-compose.dev.yml`, host port 5434), `noclucal_test` (CI service container, ephemeral), `noclucal_prod` (DO managed cluster, provisioned 2026-05-26); separate databases, not schemas (`INFRA-PLAYBOOK.md` § Database operations).
+- **Connection module.** `src/lib/db/index.ts` exports `pool`, `db`, `closeDb()`, and re-exports `schema`. Lazy init via a Proxy: importing the module has zero side effects, the `Pool` and Drizzle client are constructed on first property access, and an unset `DATABASE_URL` throws at that point (load-bearing for the Next.js build; same reason as the queue module, `INFRA-PLAYBOOK.md` § Lazy, side-effect-free connections). Pool config: max 10 connections, 30s idle, 5s connect. Mirrors noclulabs' Phase 3a pattern exactly.
+- **Drizzle instance with schema.** `db = drizzle(getPool(), { schema })`, so `db.query.noclucalUsers` is typed. New tables added to `src/lib/db/schema/` show up automatically once their file is exported from `schema/index.ts`.
+- **Smoke test.** `pnpm db:smoke` (`scripts/db-smoke-test.ts`) answers "is the database reachable right now?" without depending on any schema; `pnpm redis:smoke` is the Redis analogue. Detail in `INFRA-PLAYBOOK.md` § Smoke tests.
+- **SSL workaround (critical).** Every `DATABASE_URL` used by node-pg / drizzle-orm / drizzle-kit MUST end with `&uselibpqcompat=true` (`psql` and local dev do not need the suffix). The why and the psql ops pattern: `INFRA-PLAYBOOK.md` § The libpqcompat SSL workaround.
+- **Two-URL pattern.** Public URL for Mac ops, VPC URL for the droplet runtime, both in Bitwarden; detail in `INFRA-PLAYBOOK.md` § Database operations.
 - **UUID PKs.** Postgres 18 native `uuidv7()` (time-ordered, no extension required). Not used yet by `noclucal_users` because the id comes from the noclulabs JWT, not from the DB.
 
 ### Schema
@@ -200,14 +189,14 @@ Design rationale for the booking-core tables (`event_types`, `host_settings`, `a
 
 ### Migrations
 
-- **Workflow.** Edit a schema file, then `pnpm db:generate` produces SQL in `drizzle/migrations/`. Inspect the file. If a new Postgres extension is required (citext, pgcrypto, etc.), hand-edit the SQL to prepend `CREATE EXTENSION IF NOT EXISTS <name>;\n--> statement-breakpoint` before the first statement that depends on it (Drizzle does NOT auto-generate extension creation). Then `pnpm db:migrate` applies against local dev.
+- **Workflow.** Edit a schema file, `pnpm db:generate`, inspect the SQL, and if a new Postgres extension is required hand-edit to prepend `CREATE EXTENSION IF NOT EXISTS <name>;\n--> statement-breakpoint` before the first statement that depends on it (Drizzle does NOT auto-generate extension creation), then `pnpm db:migrate`. Same steps in README § Migrations.
 - **Statement breakpoints.** `--> statement-breakpoint` is Drizzle's convention for splitting one migration file into multiple SQL statements at runtime. Without it the file is one statement, and an extension-then-extension-column-type combo fails to apply.
-- **Deploy.** On every merge to `main`, `deploy.yml` runs `docker compose --profile migrate run --rm --build migrate` before rebuilding the web container. Drizzle's `__drizzle_migrations` tracking table makes this idempotent: already-applied migrations are skipped. The order (migrate, then rebuild) suits additive migrations. For a migration that drops a column or otherwise breaks the previous app code, flip the order for that deploy (build first, migrate second).
-- **CI.** `ci.yml` spins up a `postgres:18-alpine` service container, sets `DATABASE_URL` at the job level, and runs `pnpm db:test:setup` (which shells out to `pnpm db:migrate:deploy`) before lint. No tests use the DB yet; infrastructure lives now so Phase 1d slots in cleanly.
+- **Deploy.** Migrations apply against `noclucal_prod` on every merge via the `migrate` Compose profile, before the web rebuild; Drizzle's `__drizzle_migrations` table makes the run idempotent. For a migration that breaks the previous app code, flip the order for that deploy (build first, migrate second). Mechanics in `INFRA-PLAYBOOK.md` § Deploy mechanics.
+- **CI.** `ci.yml` runs Postgres and Redis service containers, sets `DATABASE_URL` and `REDIS_URL` at the job level, and applies migrations via `pnpm db:test:setup` before the lint / type-check / test / build gate. Detail in `INFRA-PLAYBOOK.md` § CI.
 
 ## Auth
 
-Auth.js v5 is wired in SSO relying-party mode as of Phase 1d. All authentication happens at noclulabs.com; noCluCal verifies the JWT noclulabs signed and propagates the session via `auth()`. There is no signin/signup form here.
+Auth.js v5 is wired in SSO relying-party mode as of Phase 1d. All authentication happens at noclulabs.com; noCluCal verifies the JWT noclulabs signed and propagates the session via `auth()`.
 
 - **Config split.** Same edge-safe / server-only split as noclulabs: `src/auth.config.ts` (edge-safe, no `pg` / `drizzle` / `bcrypt` imports), `src/auth.ts` (extends, no providers since this is RP-only), `src/proxy.ts` (imports ONLY from `auth.config.ts`, replaces the Next.js 16 deprecated `middleware` convention). NEVER collapse to one file; the proxy compiles to the edge runtime and crashes if Node-only imports leak in.
 - **No providers.** The Auth.js providers array is empty. Sign-in happens at noclulabs.com.
@@ -215,7 +204,7 @@ Auth.js v5 is wired in SSO relying-party mode as of Phase 1d. All authentication
 - **Cookie name prefix.** `__Secure-` prefix is applied in lockstep with `useSecureCookies`, matching noclulabs exactly so the same cookie is read on both sides.
 - **JWT shape.** Mirrors noclulabs' augmentation: `{ id, username, role: "user" | "admin", signedInAt?: number, deviceId?: string }`. `signedInAt` and `deviceId` are read but never written here.
 - **Session callback.** A pure pass-through that maps JWT fields onto `session.user`. No DB access, no mutation of the token.
-- **Protected routes.** Listed in `src/proxy.ts`'s `config.matcher`. Phase 1d ships `/me` only; later phases extend the matcher. Unauthenticated visitors are redirected to `https://noclulabs.com/signin?redirect=<encoded original URL>`.
+- **Protected routes.** Listed in `src/proxy.ts`'s `config.matcher`. Unauthenticated visitors are redirected to `https://noclulabs.com/signin?redirect=<encoded original URL>`.
 - **NextAuth handlers.** `src/app/api/auth/[...nextauth]/route.ts` re-exports `GET` and `POST` from `@/auth`. Required even in RP-only mode for the session endpoint.
 - **Lazy upsert.** `src/lib/auth/upsert-noclucal-user.ts` performs an `INSERT ... ON CONFLICT (id) DO UPDATE` into `noclucal_users` on each authenticated page render. Best-effort: failures are logged but never break the render. Callers wrap in `try/catch`.
 - **Env vars.** Same set as noclulabs: `AUTH_SECRET` (MUST match noclulabs' value exactly), `AUTH_URL` (`https://cal.noclulabs.com` in prod), `AUTH_TRUST_HOST=true` (required behind the Caddy reverse proxy).
@@ -235,10 +224,10 @@ each concrete provider; server entry points import `register-all` once at
 startup before any code path that calls `getProvider`.
 
 Webhook subscription methods are intentionally NOT part of the
-`CalendarProvider` interface yet. Watch channel renewal needs BullMQ for
-recurring jobs, which lands with Redis in Phase 5. When webhooks ship, they
-go on a separate extension interface that webhook-capable providers
-implement in addition to the base `CalendarProvider`.
+`CalendarProvider` interface yet; when webhooks ship, they go on a separate
+extension interface that webhook-capable providers implement in addition to
+the base `CalendarProvider` (status and rationale in ROADMAP § Deferred
+items).
 
 ### Storage shape
 
@@ -305,15 +294,11 @@ Full prose for each rule is in `CALENDAR-PLAYBOOK.md` § Calendar connection flo
 
 ## Event types and availability
 
-The booking-core table definitions live in § Database / Schema above. The deep
-storage rationale from Phase 3a (storage-only scope, the per-user single
-schedule with no `schedule_id`, the normalized multiple-rows-per-key model, ISO
-weekday + wall-clock time, integer minutes over `interval`, color as an
-app-validated token, and `host_settings` preserving the shadow-table invariant)
-lives in `CALENDAR-PLAYBOOK.md` § Event types and availability storage. Two of
-those carry forward as active rules: do not retrofit a `schedule_id` until
-multi-schedule is scoped, and new host preferences belong on `host_settings`,
-never on the `noclucal_users` shadow table.
+The booking-core table definitions live in § Database / Schema above; the deep
+Phase 3a storage rationale lives in `CALENDAR-PLAYBOOK.md` § Event types and
+availability storage. Two rules carry forward as active: do not retrofit a
+`schedule_id` until multi-schedule is scoped, and new host preferences belong
+on `host_settings`, never on the `noclucal_users` shadow table.
 
 ## Slot computation
 
@@ -427,4 +412,4 @@ nav order is Overview, Event types, Availability, Calendars, Bookings.
 
 ## Known minor issues
 
-- **Caddy access log block removed during Phase 1a ops.** The `log {}` block for `cal.noclulabs.com` was stripped from `/etc/caddy/Caddyfile` because `/var/log/caddy/` is not writable by the Caddy user. Re-enable by pre-creating the log file with `caddy:caddy` ownership first. Not blocking; access logs are nice-to-have.
+- **Caddy access logging for `cal.noclulabs.com` is disabled** (Phase 1a ops; not blocking; re-enable steps in `INFRA-PLAYBOOK.md` § Caddy access log).
