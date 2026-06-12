@@ -281,6 +281,8 @@ Between 5a and 5b (2026-06-11): the infra reference layer landed. A docs-only PR
 ### Phase 5c: wire the confirmation through a queued job (planned)
 
 - [ ] Enqueue a confirmation job from `confirmBooking` and send the branded email from the worker, replacing reliance on Google's own invite as the only confirmation.
+- [ ] Bounce and complaint handling via Resend webhooks (descoped from 5b: the unwired capability has no deliveries to handle feedback for).
+- Wiring constraint, also in CLAUDE.md § Email sending: the `server-only` marker on the email modules throws when imported by a plain Node process, and the worker runs via tsx without the `react-server` condition (running it with that condition would instead break `react-dom/server`, which `@react-email/render` uses). 5c must either send from the Next.js process or take `server-only` off the send path as part of the wiring.
 
 ### Phase 5d: scheduled reminders (planned)
 

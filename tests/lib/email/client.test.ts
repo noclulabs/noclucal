@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // The `server-only` marker throws outside a React Server environment, so it
 // is stubbed here the way `googleapis` is stubbed in the provider tests. The
-// guard itself is exercised by `pnpm build`, not by this suite.
+// guard itself fires when a bundler resolves the module into a client graph,
+// not in this suite (and not in `pnpm build` while the module stays unwired).
 vi.mock("server-only", () => ({}));
 
 import { Resend } from "resend";

@@ -421,6 +421,7 @@ Phase 5b ships the branded booking-confirmation email capability, deliberately u
 - **`sendConfirmationEmail`** (`src/lib/email/send-confirmation.ts`) renders the template and sends through Resend, returning the result as-is; the best-effort policy belongs to the 5c caller. Resend reports API failures via `result.error`, not by throwing; only transport failures reject.
 - The branded email **complements Google's own calendar invite** (which already carries the Meet link); it does not replace it.
 - **Tests** mock the `resend` SDK the way the provider tests mock `googleapis`, and stub the `server-only` marker (`vi.mock("server-only", () => ({}))`) because it throws outside a React Server environment.
+- **5c wiring constraint.** `server-only`'s default export condition throws in any plain Node process, so the worker (tsx, no `react-server` condition) cannot import the send path as shipped, and running it with `--conditions react-server` instead breaks `react-dom/server`, which `@react-email/render` uses. Wiring 5c means sending from the Next.js process or taking `server-only` off the send path.
 
 ## Known minor issues
 

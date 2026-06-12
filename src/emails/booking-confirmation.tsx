@@ -169,7 +169,7 @@ export function BookingConfirmationEmail({
             <Text style={detailValueStyle}>{when}</Text>
             <Text style={detailLabelStyle}>Duration</Text>
             <Text style={{ ...detailValueStyle, margin: 0 }}>
-              {`${durationMinutes} minutes`}
+              {`${durationMinutes} ${durationMinutes === 1 ? "minute" : "minutes"}`}
             </Text>
           </Section>
 
