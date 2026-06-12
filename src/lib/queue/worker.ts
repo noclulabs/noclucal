@@ -1,16 +1,34 @@
 import { Worker, type Job, type Processor } from "bullmq";
 
+import { sendConfirmationEmail } from "@/lib/email/send-confirmation";
 import { createRedisConnection } from "./connection";
-import { JOB_NAMES, NOTIFICATIONS_QUEUE, QUEUE_PREFIX } from "./constants";
+import {
+  JOB_NAMES,
+  NOTIFICATIONS_QUEUE,
+  QUEUE_PREFIX,
+  type SendConfirmationJobPayload,
+} from "./constants";
 
-// The notifications worker scaffold. Phase 5a ships no real job logic: the
-// default processor only handles the trivial `health` job (echoing its data so
-// the round-trip test can assert a result) and otherwise resolves with no side
-// effect. Confirmation and reminder processing land in later sub-phases.
+// The notifications worker. The `health` job echoes its data so the round-trip
+// test can assert a result; `send-confirmation` (Phase 5c) renders and sends
+// the branded confirmation email from its self-contained payload, with no
+// database read. Send errors throw out of the processor so BullMQ applies the
+// retry and backoff configured on the queue; Resend reports API-level failures
+// via `result.error` rather than throwing, so that case is raised explicitly
+// (an unverified domain or bad sender must fail the job, not complete it).
 
 export const defaultProcessor: Processor = async (job: Job) => {
   if (job.name === JOB_NAMES.HEALTH) {
     return job.data;
+  }
+  if (job.name === JOB_NAMES.SEND_CONFIRMATION) {
+    const result = await sendConfirmationEmail(
+      job.data as SendConfirmationJobPayload,
+    );
+    if (result.error) {
+      throw new Error(`confirmation email send failed: ${result.error.message}`);
+    }
+    return result.data;
   }
   return undefined;
 };

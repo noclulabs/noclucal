@@ -1,5 +1,3 @@
-import "server-only";
-
 import { Resend } from "resend";
 
 // Resend client management, mirroring the lazy, side-effect-free shape of
@@ -10,8 +8,10 @@ import { Resend } from "resend";
 // build-time module collection imports route modules transitively without
 // the email env vars set, and an eager read would crash the build.
 //
-// The `server-only` import makes any accidental client-bundle import a build
-// error, so the API key can never reach the browser.
+// Server-side by convention, like the DB and crypto modules; no `server-only`
+// marker, because the tsx worker imports this path and the marker throws in a
+// plain Node process (INFRA-PLAYBOOK.md § The worker). Nothing client-side
+// imports these modules, so the API key stays out of client bundles.
 
 let _client: Resend | undefined;
 

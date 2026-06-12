@@ -123,6 +123,30 @@ namespaced under `noclucal:`. The Redis container is dedicated today; the
 prefix keeps the keyspace isolated if Redis is ever shared with another suite
 app later.
 
+### Notifications jobs and their options
+
+Phase 5c added the first real job, `send-confirmation` (`JOB_NAMES.SEND_CONFIRMATION`
+in `src/lib/queue/constants.ts`): `confirmBooking` enqueues it best-effort after a
+successful booking, and the worker renders and sends the branded confirmation
+email through Resend. The payload is self-contained (exactly the
+`sendConfirmationEmail` input, re-exported as `SendConfirmationJobPayload`), so
+the worker does no database read.
+
+The notifications queue sets default job options in `src/lib/queue/queues.ts`:
+
+- **`attempts: 3` with exponential backoff** (5s base): transient Resend
+  failures retry; a persistent failure exhausts its attempts and lands in the
+  failed set, logged by the worker's `failed` handler.
+- **`removeOnComplete: true`**: completed job payloads carry invitee PII (name,
+  email, note) and must not linger in Redis after the send succeeds.
+- **`removeOnFail: 100`**: a small bounded window of failed jobs stays for
+  debugging; the bound keeps memory finite under the `noeviction` policy, which
+  refuses writes rather than evicting when memory fills.
+
+Resend reports API-level failures (an unverified domain, a bad sender) via
+`result.error` rather than throwing, so the worker's processor raises them
+explicitly; otherwise such a job would complete without a send and never retry.
+
 ### Lazy, side-effect-free connections
 
 `src/lib/queue/connection.ts` mirrors the lazy shape of `src/lib/db/index.ts`:
@@ -177,6 +201,24 @@ error on the missing file in the container.
 Docker stop and compose restarts send SIGTERM, so a deploy does not kill a
 job mid-flight. The entry also logs `ready`, per-job `failed`, and `error`
 lifecycle events.
+
+### The worker-import constraint: no `server-only` on the worker's import graph
+
+Nothing the worker imports may use the `server-only` marker. The marker's
+default export condition throws in any plain Node process, and the worker runs
+through tsx without the `react-server` condition, so a `server-only` import
+anywhere in the worker's transitive graph crashes the process at import time.
+Running tsx with `--conditions react-server` is not a way out: that condition
+breaks `react-dom/server`, which `@react-email/render` uses to render the
+email templates.
+
+This bit in Phase 5c, when the worker first imported the email send path
+(Phase 5b had shipped `src/lib/email/` with `server-only` on the client and
+send modules). Resolved by removing `server-only` from the email path and
+dropping the dependency: the email modules are server-side by convention,
+like the DB and crypto modules, and nothing client-side imports them, so the
+API key stays out of client bundles. Any future module the worker must import
+follows the same rule.
 
 ## Deploy mechanics
 
@@ -236,10 +278,14 @@ Precedents:
 - **`REDIS_URL=redis://redis:6379` (Phase 5a).** Required by the `worker`
   service; without it the worker restart-loops. The `web` service gets its
   `REDIS_URL` from compose `environment`, not from the droplet `.env`.
-
-Forward note: `RESEND_API_KEY` arrives in Phases 5b and 5c and follows the
-same pattern (added to the droplet `.env` before or with the deploy that
-sends the first email).
+- **`RESEND_API_KEY` and `EMAIL_FROM` (Phase 5c).** Required for sending now
+  that the worker delivers the confirmation email. `EMAIL_FROM` must be a
+  sender on a domain verified in Resend. Unlike `REDIS_URL`, a missing value
+  does not crash the worker at boot: the Resend client is constructed lazily
+  on first use, so the failure surfaces as a failed send job (retried with
+  backoff, then logged), and the booking itself is unaffected. The sending
+  domain must be verified in Resend before or with the deploy, or every send
+  fails the same graceful way until it is.
 
 ### Caddy access log
 

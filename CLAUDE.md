@@ -9,7 +9,7 @@
 - **Domain:** cal.noclulabs.com (subdomain of noclulabs.com for cookie-based SSO)
 - **Repository:** github.com/noclulabs/noclucal
 - **Hosting:** DigitalOcean Droplet (shared with noclulabs.com and portalNetwork; unique host port)
-- **Status:** Phase 4 complete (2026-06-09); Phase 5a (Redis / BullMQ substrate) shipped, tested with no real jobs yet; Phase 5b (2026-06-12) shipped the branded confirmation email capability (lazy server-only Resend client, React Email template, `sendConfirmationEmail`), deliberately unwired. End-to-end booking is live: a visitor picks a time on a host's public `/[username]/[slug]` page and confirms; the slot is claimed under the `bookings_no_overlap_per_host` exclusion constraint, then a best-effort Google event with a Meet link and an invitee invite is created. Phase 5c (wire the confirmation send through a queued job) and Phase 6 (reschedule / cancel) follow; the optional Phase 3 live slot preview remains. Detail lives in ROADMAP.md and CHANGELOG.md; booking-core rationale in `CALENDAR-PLAYBOOK.md`; infrastructure and operations rationale in `INFRA-PLAYBOOK.md`.
+- **Status:** Phase 4 complete (2026-06-09); Phases 5a (Redis / BullMQ substrate), 5b (the branded confirmation email), and 5c (2026-06-12, the wiring; see § Email sending) shipped. End-to-end booking is live: a visitor picks a time on a host's public `/[username]/[slug]` page and confirms; the slot is claimed under the `bookings_no_overlap_per_host` exclusion constraint, then a best-effort Google event with a Meet link and an invitee invite is created, then the branded confirmation email goes out. Phase 5d (reminders), 5e (rate limiting), and Phase 6 (reschedule / cancel) follow; the optional Phase 3 live slot preview remains. Detail: ROADMAP.md and CHANGELOG.md; deep rationale: `CALENDAR-PLAYBOOK.md` (booking core) and `INFRA-PLAYBOOK.md` (infrastructure and operations).
 
 ## Bible files (canonical set)
 
@@ -37,7 +37,7 @@ Every architect-generated executor prompt MUST list all four bible files in its 
 - **Styling:** Tailwind CSS v4
 - **Font:** Space Grotesk (inherited from noclulabs design system, via `next/font/google`)
 - **Database:** PostgreSQL 18 via Drizzle ORM with the `pg` driver
-- **Caching and queues:** Redis with BullMQ for rate limiting and background jobs (confirmation email, reminders, OAuth token refresh, webhook processing). Deployed substrate as of Phase 5a; no real jobs wired yet
+- **Caching and queues:** Redis with BullMQ for rate limiting and background jobs (confirmation email, reminders, OAuth token refresh, webhook processing). Substrate deployed in Phase 5a; the first real job (the confirmation email) wired in 5c
 - **Auth:** Auth.js v5 (`next-auth@beta`) in SSO relying-party mode (see § Identity bridge)
 - **Time and timezones:** Luxon (IANA tz support, RRULE helpers; chosen over date-fns-tz for the recurrence story)
 - **Email:** Resend with React Email templates
@@ -92,7 +92,7 @@ top-level area, never for every new file (the source files own the detail).
   - `bookings/` confirmed-booking records, constants, data-access.
   - `auth/` the lazy `noclucal_users` upsert; plus top-level helpers (`app-url.ts`, `version.ts`).
   - `queue/` (Phase 5a) the lazy Redis connection, BullMQ queue constants and the producer handle, and the worker scaffold.
-  - `email/` (Phase 5b) the lazy server-only Resend client, the `sendConfirmationEmail` send function, and the email-facing Luxon formatter.
+  - `email/` (Phase 5b, wired in 5c) the lazy Resend client, the `sendConfirmationEmail` send function, and the email-facing Luxon formatter.
 - **`src/emails/`** React Email templates (the Phase 5b booking confirmation), rendered server-side by `src/lib/email/`.
 - **`src/worker.ts`** the BullMQ worker process entry, run via tsx in the `worker` container (see § Infrastructure and deployment).
 - **`src/app/`** the App Router tree: root layout / page / `globals.css`, `me/`, `api/` (Auth.js handler, Google OAuth connect / callback), `settings/` (the shell `layout.tsx`, `settings-nav.tsx`, the `/settings` overview, and the event-types, availability, calendars, and bookings-placeholder sections, each a page plus server `actions.ts`), and the public booking page at `[username]/[slug]/` (the dynamic, anonymous `page.tsx` plus the `booking-picker.tsx` client component, outside the auth matcher).
@@ -113,7 +113,7 @@ Live at https://cal.noclulabs.com (host port 3002 behind Caddy; portalNetwork ho
 - Redis runs `--maxmemory-policy noeviction` and `--appendonly yes` in dev and prod; every BullMQ key is prefixed `noclucal`.
 - The queue connection module is lazy and side-effect-free like the DB module, with `maxRetriesPerRequest: null` on every connection, and the Worker takes its own connection while producers share a memoized one.
 - The worker is its own compose service running `src/worker.ts` via tsx (`@/` resolves from `tsconfig.json` unbundled) with graceful SIGTERM / SIGINT shutdown.
-- The droplet `/opt/noclucal/.env` holds config and secrets, each new key added before or with the deploy that needs it (`TOKEN_ENCRYPTION_KEY`, `REDIS_URL`; `RESEND_API_KEY` next in 5b/5c).
+- The droplet `/opt/noclucal/.env` holds config and secrets, each new key added before or with the deploy that needs it (`TOKEN_ENCRYPTION_KEY`, `REDIS_URL`; `RESEND_API_KEY` and `EMAIL_FROM` as of 5c).
 - Deploy is `deploy.yml` on merge to `main`: `git pull`, the `migrate` Compose profile, `docker compose up -d --build`, prune.
 
 ## Conventions
@@ -191,7 +191,7 @@ Design rationale for the booking-core tables (`event_types`, `host_settings`, `a
 
 ### Migrations
 
-- **Workflow.** Edit a schema file, `pnpm db:generate`, inspect the SQL, and if a new Postgres extension is required hand-edit to prepend `CREATE EXTENSION IF NOT EXISTS <name>;\n--> statement-breakpoint` before the first statement that depends on it (Drizzle does NOT auto-generate extension creation), then `pnpm db:migrate`. Same steps in README § Migrations.
+- **Workflow.** README § Migrations owns the steps. The gotcha: Drizzle does NOT auto-generate `CREATE EXTENSION`; hand-prepend it with a `--> statement-breakpoint` before the first dependent statement.
 - **Statement breakpoints.** `--> statement-breakpoint` is Drizzle's convention for splitting one migration file into multiple SQL statements at runtime. Without it the file is one statement, and an extension-then-extension-column-type combo fails to apply.
 - **Deploy.** Migrations apply against `noclucal_prod` on every merge via the `migrate` Compose profile, before the web rebuild; Drizzle's `__drizzle_migrations` table makes the run idempotent. For a migration that breaks the previous app code, flip the order for that deploy (build first, migrate second). Mechanics in `INFRA-PLAYBOOK.md` § Deploy mechanics.
 - **CI.** `ci.yml` runs Postgres and Redis service containers, sets `DATABASE_URL` and `REDIS_URL` at the job level, and applies migrations via `pnpm db:test:setup` before the lint / type-check / test / build gate. Detail in `INFRA-PLAYBOOK.md` § CI.
@@ -414,14 +414,15 @@ nav order is Overview, Event types, Availability, Calendars, Bookings.
 
 ## Email sending
 
-Phase 5b ships the branded booking-confirmation email capability, deliberately unwired: nothing in the booking flow or the worker calls it, and Phase 5c wires the send through a queued job. The pattern:
+Wired as of Phase 5c: after a successful booking, `confirmBooking` enqueues a `send-confirmation` job and the worker sends the branded confirmation through Resend. The enqueue is best-effort and appended after the claim and the Google write-back; a failure is logged and never affects the booking. The pattern:
 
-- **Lazy, server-only Resend client** at `src/lib/email/client.ts`, mirroring the DB and queue modules: zero import side effects, `RESEND_API_KEY` and `EMAIL_FROM` throw on first use (never at import), and `import "server-only"` keeps the key out of client bundles.
-- **Templates** live in `src/emails/` as React Email components with inline styles and the Indigo Signal tokens duplicated from `globals.css` (email clients cannot read CSS custom properties). Times render in the invitee timezone via `formatInstantForEmail` (`src/lib/email/format.ts`, Luxon, fixed en-US locale); the only other display formatter lives inline in the `"use client"` booking picker and is not importable from server-rendered email.
-- **`sendConfirmationEmail`** (`src/lib/email/send-confirmation.ts`) renders the template and sends through Resend, returning the result as-is; the best-effort policy belongs to the 5c caller. Resend reports API failures via `result.error`, not by throwing; only transport failures reject.
+- **Lazy Resend client** at `src/lib/email/client.ts`, mirroring the DB and queue modules: zero import side effects; `RESEND_API_KEY` and `EMAIL_FROM` throw on first use, never at import. Server-side by convention like the DB and crypto modules; `server-only` was removed in 5c so the tsx worker can import the send path (why: `INFRA-PLAYBOOK.md` § The worker).
+- **Self-contained payload.** The job payload is exactly the `sendConfirmationEmail` input (`SendConfirmationJobPayload` in `src/lib/queue/constants.ts`); `confirmBooking` builds it from data it already holds and the worker passes `job.data` through with no DB read. Job options: `INFRA-PLAYBOOK.md` § Redis and BullMQ operations.
+- **Templates** live in `src/emails/` as React Email components with inline styles and the Indigo Signal tokens duplicated from `globals.css` (email clients cannot read CSS custom properties). Times render in the invitee timezone via `formatInstantForEmail` (`src/lib/email/format.ts`, Luxon, fixed en-US locale).
+- **`sendConfirmationEmail`** renders both an HTML and a plain-text body and sends through Resend, returning the result as-is. Resend reports API failures via `result.error`, not by throwing (the worker raises them so BullMQ retries); only transport failures reject. The Meet link is optional (absent when the Google write-back failed); the template renders gracefully without it.
 - The branded email **complements Google's own calendar invite** (which already carries the Meet link); it does not replace it.
-- **Tests** mock the `resend` SDK the way the provider tests mock `googleapis`, and stub the `server-only` marker (`vi.mock("server-only", () => ({}))`) because it throws outside a React Server environment.
-- **5c wiring constraint.** `server-only`'s default export condition throws in any plain Node process, so the worker (tsx, no `react-server` condition) cannot import the send path as shipped, and running it with `--conditions react-server` instead breaks `react-dom/server`, which `@react-email/render` uses. Wiring 5c means sending from the Next.js process or taking `server-only` off the send path.
+- **Tests** mock the `resend` SDK and inject a stubbed enqueue in the booking tests; no test needs a live Redis, a real key, or a network.
+- **Env.** `RESEND_API_KEY` and `EMAIL_FROM` are required for sending in prod as of 5c; a missing value fails the send job (retried, then logged), never the worker boot or the booking.
 
 ## Known minor issues
 
