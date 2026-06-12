@@ -9,7 +9,7 @@
 - **Domain:** cal.noclulabs.com (subdomain of noclulabs.com for cookie-based SSO)
 - **Repository:** github.com/noclulabs/noclucal
 - **Hosting:** DigitalOcean Droplet (shared with noclulabs.com and portalNetwork; unique host port)
-- **Status:** Phase 4 complete (2026-06-09); Phase 5a (Redis / BullMQ substrate) shipped, tested with no real jobs yet. End-to-end booking is live: a visitor picks a time on a host's public `/[username]/[slug]` page and confirms; the slot is claimed under the `bookings_no_overlap_per_host` exclusion constraint, then a best-effort Google event with a Meet link and an invitee invite is created. Phase 5 (Resend emails) and Phase 6 (reschedule / cancel) follow; the optional Phase 3 live slot preview remains. Detail lives in ROADMAP.md and CHANGELOG.md; booking-core rationale in `CALENDAR-PLAYBOOK.md`; infrastructure and operations rationale in `INFRA-PLAYBOOK.md`.
+- **Status:** Phase 4 complete (2026-06-09); Phase 5a (Redis / BullMQ substrate) shipped, tested with no real jobs yet; Phase 5b (2026-06-12) shipped the branded confirmation email capability (lazy server-only Resend client, React Email template, `sendConfirmationEmail`), deliberately unwired. End-to-end booking is live: a visitor picks a time on a host's public `/[username]/[slug]` page and confirms; the slot is claimed under the `bookings_no_overlap_per_host` exclusion constraint, then a best-effort Google event with a Meet link and an invitee invite is created. Phase 5c (wire the confirmation send through a queued job) and Phase 6 (reschedule / cancel) follow; the optional Phase 3 live slot preview remains. Detail lives in ROADMAP.md and CHANGELOG.md; booking-core rationale in `CALENDAR-PLAYBOOK.md`; infrastructure and operations rationale in `INFRA-PLAYBOOK.md`.
 
 ## Bible files (canonical set)
 
@@ -92,6 +92,8 @@ top-level area, never for every new file (the source files own the detail).
   - `bookings/` confirmed-booking records, constants, data-access.
   - `auth/` the lazy `noclucal_users` upsert; plus top-level helpers (`app-url.ts`, `version.ts`).
   - `queue/` (Phase 5a) the lazy Redis connection, BullMQ queue constants and the producer handle, and the worker scaffold.
+  - `email/` (Phase 5b) the lazy server-only Resend client, the `sendConfirmationEmail` send function, and the email-facing Luxon formatter.
+- **`src/emails/`** React Email templates (the Phase 5b booking confirmation), rendered server-side by `src/lib/email/`.
 - **`src/worker.ts`** the BullMQ worker process entry, run via tsx in the `worker` container (see § Infrastructure and deployment).
 - **`src/app/`** the App Router tree: root layout / page / `globals.css`, `me/`, `api/` (Auth.js handler, Google OAuth connect / callback), `settings/` (the shell `layout.tsx`, `settings-nav.tsx`, the `/settings` overview, and the event-types, availability, calendars, and bookings-placeholder sections, each a page plus server `actions.ts`), and the public booking page at `[username]/[slug]/` (the dynamic, anonymous `page.tsx` plus the `booking-picker.tsx` client component, outside the auth matcher).
 - **`src/auth.ts`, `src/auth.config.ts`, `src/proxy.ts`** the Auth.js relying-party wiring: server, edge-safe, route-protecting proxy (see § Auth).
@@ -409,6 +411,16 @@ nav order is Overview, Event types, Availability, Calendars, Bookings.
 - **Sign-out** (`actions.ts`) is relying-party: `signOut` clears the Auth.js
   cookie scoped to `.noclulabs.com`, signing the user out suite-wide, then
   redirects to noclulabs sign-in.
+
+## Email sending
+
+Phase 5b ships the branded booking-confirmation email capability, deliberately unwired: nothing in the booking flow or the worker calls it, and Phase 5c wires the send through a queued job. The pattern:
+
+- **Lazy, server-only Resend client** at `src/lib/email/client.ts`, mirroring the DB and queue modules: zero import side effects, `RESEND_API_KEY` and `EMAIL_FROM` throw on first use (never at import), and `import "server-only"` keeps the key out of client bundles.
+- **Templates** live in `src/emails/` as React Email components with inline styles and the Indigo Signal tokens duplicated from `globals.css` (email clients cannot read CSS custom properties). Times render in the invitee timezone via `formatInstantForEmail` (`src/lib/email/format.ts`, Luxon, fixed en-US locale); the only other display formatter lives inline in the `"use client"` booking picker and is not importable from server-rendered email.
+- **`sendConfirmationEmail`** (`src/lib/email/send-confirmation.ts`) renders the template and sends through Resend, returning the result as-is; the best-effort policy belongs to the 5c caller. Resend reports API failures via `result.error`, not by throwing; only transport failures reject.
+- The branded email **complements Google's own calendar invite** (which already carries the Meet link); it does not replace it.
+- **Tests** mock the `resend` SDK the way the provider tests mock `googleapis`, and stub the `server-only` marker (`vi.mock("server-only", () => ({}))`) because it throws outside a React Server environment.
 
 ## Known minor issues
 

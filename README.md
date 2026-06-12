@@ -43,6 +43,8 @@ Open http://localhost:3000.
 
 For the SSO bridge with noclulabs.com to work in production, `AUTH_SECRET` in `.env.local` must match the noclulabs value. In dev, any random 32-byte base64 string works (generate with `openssl rand -base64 32`); the cookie domain is not set in dev mode, so local sessions stay local.
 
+`RESEND_API_KEY` and `EMAIL_FROM` configure the branded transactional emails (Resend with React Email). Both become required in production when sending goes live in Phase 5c; `EMAIL_FROM` must be a sender on a domain verified in Resend. In dev, dummy values are fine: nothing sends yet and the test suite mocks the Resend client.
+
 ### Commands
 
 ```bash
