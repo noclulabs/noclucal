@@ -773,7 +773,7 @@ touching Google.
 
 ### The operation order is the contract
 
-The five steps run in this exact order, and the order is the correctness
+The steps run in this exact order, and the order is the correctness
 argument:
 
 1. **Validate.** The invitee input is re-parsed server-side with Zod (name
@@ -800,6 +800,14 @@ argument:
    create the Google Calendar event (with a Meet link and `sendUpdates: "all"`),
    then `updateBookingGoogleRefs` stores the event id, html link, and Meet link
    on the row.
+6. **Best-effort confirmation enqueue (Phase 5c).** After the claim and the
+   Google write-back, the action enqueues a `send-confirmation` job carrying a
+   self-contained payload (exactly the `sendConfirmationEmail` input, built
+   from data the action already holds; the Meet link is absent when the
+   write-back failed). An enqueue failure is logged and swallowed like a
+   Google failure: a notification hiccup never affects the booking outcome,
+   and the order of steps 1 through 5 is unchanged. The enqueue is injected
+   (`deps`) alongside the two external calls, so tests run without Redis.
 
 ### Why claim precedes the Google write
 
@@ -844,9 +852,9 @@ broken promise on noCluCal's own slots.
 
 The Google event is created with `sendUpdates: "all"`, so Google emails its own
 calendar invitation (carrying the Meet link) to the invitee the moment the event
-is inserted. That is deliberately the invitee's confirmation channel for now: the
-branded noCluCal confirmation email is Phase 5, and leaning on Google's invite
-means there is never a silent success where the invitee gets nothing. The Meet
-link is also shown in the in-place confirmation when present. There is no rate
-limiting on the public form yet (a follow-up), and reschedule and cancel are
-Phase 6.
+is inserted. Since Phase 5c the branded noCluCal confirmation email (step 6)
+complements that invite rather than replacing it: leaning on both means there is
+never a silent success where the invitee gets nothing, even when one channel
+fails. The Meet link is also shown in the in-place confirmation when present.
+There is no rate limiting on the public form yet (a follow-up), and reschedule
+and cancel are Phase 6.

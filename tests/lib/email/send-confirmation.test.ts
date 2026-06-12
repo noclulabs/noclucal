@@ -1,9 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// The `server-only` marker throws outside a React Server environment; stub it
-// the way the provider tests stub `googleapis`.
-vi.mock("server-only", () => ({}));
-
 // Mock the Resend SDK so no network call can happen. The mock function is
 // declared first so tests can configure it; a regular function expression
 // backs the constructor so `new Resend(...)` works.
@@ -80,6 +76,27 @@ describe("sendConfirmationEmail", () => {
     expect(payload.html).toContain("Ada Lovelace");
     expect(payload.html).toContain("Thursday, June 18, 2026 at 2:30 PM PDT");
     expect(payload.html).toContain("https://meet.google.com/abc-defg-hij");
+  });
+
+  it("includes a plain-text part alongside the html", async () => {
+    mockSend.mockResolvedValue({ data: { id: "email_123" }, error: null });
+    await sendConfirmationEmail(INPUT);
+    const payload = mockSend.mock.calls[0][0];
+    expect(payload.text).toBeTruthy();
+    // The plain-text renderer uppercases the heading.
+    expect(payload.text).toContain("BOOKING CONFIRMED");
+    expect(payload.text).toContain("Ada Lovelace");
+    expect(payload.text).not.toContain("<html");
+    expect(payload.text).not.toContain("<body");
+  });
+
+  it("renders without a Meet link when it is absent", async () => {
+    mockSend.mockResolvedValue({ data: { id: "email_123" }, error: null });
+    await sendConfirmationEmail({ ...INPUT, meetLink: undefined });
+    const payload = mockSend.mock.calls[0][0];
+    expect(payload.html).toContain("Booking confirmed");
+    expect(payload.html).not.toContain("Join with Google Meet");
+    expect(payload.text).not.toContain("Join with Google Meet");
   });
 
   it("returns the Resend send result as-is", async () => {

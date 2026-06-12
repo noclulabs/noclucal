@@ -20,6 +20,11 @@ import {
   getValidTokensForConnection,
 } from "@/lib/calendar/connections";
 import { getProvider } from "@/lib/calendar/providers";
+import {
+  JOB_NAMES,
+  type SendConfirmationJobPayload,
+} from "@/lib/queue/constants";
+import { getNotificationsQueue } from "@/lib/queue/queues";
 // Side-effecting import so the default calendar-event writer's
 // `getProvider("google")` (and the refresh path inside
 // `getValidTokensForConnection`) resolve at runtime. Tests inject stubs and
@@ -127,9 +132,16 @@ export type CreateCalendarEvent = (
   args: CreateCalendarEventArgs,
 ) => Promise<CreatedCalendarEvent>;
 
+/** The injectable confirmation-email enqueue. Tests stub it; the default
+ *  enqueues a `send-confirmation` job on the notifications queue. */
+export type EnqueueConfirmationEmail = (
+  payload: SendConfirmationJobPayload,
+) => Promise<void>;
+
 export interface ConfirmBookingDeps {
   getAvailableSlots: typeof getAvailableSlots;
   createCalendarEvent: CreateCalendarEvent;
+  enqueueConfirmationEmail: EnqueueConfirmationEmail;
 }
 
 /**
@@ -176,9 +188,20 @@ const defaultCreateCalendarEvent: CreateCalendarEvent = async (args) => {
   };
 };
 
+/** Default enqueue: a `send-confirmation` job on the notifications queue. The
+ *  payload is self-contained (the worker sends with no database read) and the
+ *  queue's default job options apply (retries with backoff, completed jobs
+ *  removed). */
+const defaultEnqueueConfirmationEmail: EnqueueConfirmationEmail = async (
+  payload,
+) => {
+  await getNotificationsQueue().add(JOB_NAMES.SEND_CONFIRMATION, payload);
+};
+
 const defaultDeps: ConfirmBookingDeps = {
   getAvailableSlots,
   createCalendarEvent: defaultCreateCalendarEvent,
+  enqueueConfirmationEmail: defaultEnqueueConfirmationEmail,
 };
 
 /** First Zod issue per top-level field, keyed by field name. */
@@ -218,8 +241,12 @@ function buildDescription(
  * 5. Best-effort Google event AFTER the claim. A failure leaves the booking
  *    confirmed with null refs and still returns success; a calendar hiccup
  *    never loses a claimed slot.
+ * 6. Best-effort confirmation email enqueue AFTER the claim and the Google
+ *    write-back (Phase 5c). An enqueue failure is logged and swallowed; the
+ *    booking outcome never depends on the notification path.
  *
- * Both external calls are injected (`deps`) so tests run without Google.
+ * The external calls and the enqueue are injected (`deps`) so tests run
+ * without Google or Redis.
  */
 export async function confirmBooking(
   args: ConfirmBookingArgs,
@@ -315,7 +342,32 @@ export async function confirmBooking(
     );
   }
 
-  // 6. Success.
+  // 6. Best-effort confirmation email enqueue AFTER the claim and the Google
+  //    write-back. The payload is self-contained from data this action already
+  //    holds (the worker sends with no database read); the Meet link is absent
+  //    when the write-back failed. A failure here is logged and swallowed: the
+  //    booking outcome never depends on the notification path.
+  try {
+    await deps.enqueueConfirmationEmail({
+      to: email,
+      inviteeName: name,
+      hostName,
+      eventTypeName: eventType.name,
+      startIso: slot.start.toISOString(),
+      endIso: slot.end.toISOString(),
+      inviteeTimezone,
+      durationMinutes: eventType.durationMinutes,
+      meetLink,
+      inviteeNote: note ?? undefined,
+    });
+  } catch (err) {
+    console.error(
+      `Confirmation email enqueue failed for booking ${booking.id}; booking remains confirmed`,
+      err,
+    );
+  }
+
+  // 7. Success.
   return {
     status: "success",
     confirmation: {

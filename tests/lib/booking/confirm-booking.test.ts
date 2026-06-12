@@ -9,8 +9,10 @@ import {
   type ConfirmBookingDeps,
   type CreateCalendarEvent,
   type CreateCalendarEventArgs,
+  type EnqueueConfirmationEmail,
 } from "@/app/[username]/[slug]/actions";
 import type { AvailableSlotsResult } from "@/lib/booking/available-slots";
+import type { SendConfirmationJobPayload } from "@/lib/queue/constants";
 
 const USER_A = "01940000-0000-7000-8000-0000000000a1";
 
@@ -39,6 +41,19 @@ const throwingCreate: CreateCalendarEvent = async (args) => {
   throw new Error("Google is down");
 };
 
+// Tracks calls to the injected confirmation-email enqueue (the mocked queue
+// producer): no test touches a live Redis.
+let enqueueCalls: SendConfirmationJobPayload[] = [];
+
+const recordingEnqueue: EnqueueConfirmationEmail = async (payload) => {
+  enqueueCalls.push(payload);
+};
+
+const throwingEnqueue: EnqueueConfirmationEmail = async (payload) => {
+  enqueueCalls.push(payload);
+  throw new Error("Redis is down");
+};
+
 /** Stub `getAvailableSlots` to return a fixed slot set; the re-check never hits
  *  the real engine or Google. */
 function stubSlots(slots: { start: Date; end: Date }[]): ConfirmBookingDeps["getAvailableSlots"] {
@@ -54,6 +69,7 @@ function makeDeps(
   return {
     getAvailableSlots: stubSlots([{ start: SLOT_START, end: SLOT_END }]),
     createCalendarEvent: recordingCreate,
+    enqueueConfirmationEmail: recordingEnqueue,
     ...overrides,
   };
 }
@@ -94,6 +110,7 @@ async function clearAll(): Promise<void> {
 describe("confirmBooking", () => {
   beforeEach(async () => {
     createCalls = [];
+    enqueueCalls = [];
     await clearAll();
     await db
       .insert(noclucalUsers)
@@ -121,6 +138,22 @@ describe("confirmBooking", () => {
     expect(createCalls).toHaveLength(1);
     expect(createCalls[0].summary).toBe("Intro call with Carol");
     expect(createCalls[0].inviteeEmail).toBe("carol@example.com");
+
+    // A send-confirmation job was enqueued once with the self-contained
+    // payload, exactly the `sendConfirmationEmail` input.
+    expect(enqueueCalls).toHaveLength(1);
+    expect(enqueueCalls[0]).toEqual({
+      to: "carol@example.com",
+      inviteeName: "Carol",
+      hostName: "Alice",
+      eventTypeName: "Intro call",
+      startIso: START_ISO,
+      endIso: END_ISO,
+      inviteeTimezone: "America/New_York",
+      durationMinutes: 30,
+      meetLink: GOOGLE_REFS.meetLink,
+      inviteeNote: "Looking forward to it",
+    });
 
     const rows = await listBookingsForHost(USER_A);
     expect(rows).toHaveLength(1);
@@ -159,6 +192,7 @@ describe("confirmBooking", () => {
 
     expect(res.status).toBe("conflict");
     expect(createCalls).toHaveLength(0);
+    expect(enqueueCalls).toHaveLength(0);
     // Only the pre-existing booking survives; the second insert did not land.
     expect(await listBookingsForHost(USER_A)).toHaveLength(1);
   });
@@ -171,6 +205,7 @@ describe("confirmBooking", () => {
 
     expect(res.status).toBe("unavailable");
     expect(createCalls).toHaveLength(0);
+    expect(enqueueCalls).toHaveLength(0);
     expect(await listBookingsForHost(USER_A)).toHaveLength(0);
   });
 
@@ -187,12 +222,42 @@ describe("confirmBooking", () => {
     expect(res.confirmation.meetLink).toBeUndefined();
     expect(createCalls).toHaveLength(1);
 
+    // The confirmation still enqueues, with no Meet link in the payload.
+    expect(enqueueCalls).toHaveLength(1);
+    expect(enqueueCalls[0].meetLink).toBeUndefined();
+
     const rows = await listBookingsForHost(USER_A);
     expect(rows).toHaveLength(1);
     expect(rows[0].status).toBe("confirmed");
     expect(rows[0].googleEventId).toBeNull();
     expect(rows[0].googleHtmlLink).toBeNull();
     expect(rows[0].meetLink).toBeNull();
+
+    errorSpy.mockRestore();
+  });
+
+  it("enqueue failure: the booking still succeeds, the response unchanged", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const res = await confirmBooking(
+      makeArgs(),
+      makeDeps({ enqueueConfirmationEmail: throwingEnqueue }),
+    );
+
+    // The throwing enqueue was reached, and its failure changed nothing: the
+    // result is the same success shape the happy path returns.
+    expect(enqueueCalls).toHaveLength(1);
+    expect(res.status).toBe("success");
+    if (res.status !== "success") throw new Error("expected success");
+    expect(res.confirmation.eventName).toBe("Intro call");
+    expect(res.confirmation.inviteeEmail).toBe("carol@example.com");
+    expect(res.confirmation.startIso).toBe(START_ISO);
+    expect(res.confirmation.meetLink).toBe(GOOGLE_REFS.meetLink);
+
+    const rows = await listBookingsForHost(USER_A);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].status).toBe("confirmed");
+    expect(rows[0].googleEventId).toBe(GOOGLE_REFS.eventId);
 
     errorSpy.mockRestore();
   });
@@ -207,6 +272,7 @@ describe("confirmBooking", () => {
     if (res.status !== "invalid") throw new Error("expected invalid");
     expect(res.errors.email).toBeTruthy();
     expect(createCalls).toHaveLength(0);
+    expect(enqueueCalls).toHaveLength(0);
     expect(await listBookingsForHost(USER_A)).toHaveLength(0);
   });
 
@@ -217,6 +283,7 @@ describe("confirmBooking", () => {
     if (res.status !== "invalid") throw new Error("expected invalid");
     expect(res.errors.name).toBeTruthy();
     expect(createCalls).toHaveLength(0);
+    expect(enqueueCalls).toHaveLength(0);
     expect(await listBookingsForHost(USER_A)).toHaveLength(0);
   });
 
@@ -228,6 +295,7 @@ describe("confirmBooking", () => {
 
     expect(res.status).toBe("not_bookable");
     expect(createCalls).toHaveLength(0);
+    expect(enqueueCalls).toHaveLength(0);
     expect(await listBookingsForHost(USER_A)).toHaveLength(0);
   });
 
@@ -241,6 +309,7 @@ describe("confirmBooking", () => {
 
     expect(res.status).toBe("not_bookable");
     expect(createCalls).toHaveLength(0);
+    expect(enqueueCalls).toHaveLength(0);
     expect(await listBookingsForHost(USER_A)).toHaveLength(0);
   });
 });
